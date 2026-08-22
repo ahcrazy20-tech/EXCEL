@@ -1,0 +1,55 @@
+name: Build unsigned IPA (TrollStore)
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app || sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (unsigned, device SDK)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project SheetX.xcodeproj \
+            -scheme SheetX \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_ENTITLEMENTS="" \
+            ONLY_ACTIVE_ARCH=NO \
+            build
+
+      - name: Package IPA
+        run: |
+          APP_PATH="build/Build/Products/Release-iphoneos/SheetX.app"
+          ls -la "$APP_PATH"
+          mkdir -p out/Payload
+          cp -R "$APP_PATH" out/Payload/
+          cd out
+          zip -qry SheetX-unsigned.ipa Payload
+          cd ..
+          ls -lh out/SheetX-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SheetX-unsigned-ipa
+          path: out/SheetX-unsigned.ipa
+          if-no-files-found: error
