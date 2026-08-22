@@ -157,6 +157,7 @@ final class Library: ObservableObject {
         guard !importing else { return }
         importing = true
         Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("SheetX Demo.csv")
             var csv = "Order ID,Date,Customer,City,Category,Product,Quantity,Unit Price,Total,Status\n"
             let cities = ["Jeddah", "Riyadh", "Dammam", "Mecca", "Medina", "Abha"]
@@ -182,16 +183,16 @@ final class Library: ObservableObject {
             do {
                 _ = try CSVImporter(workspace: Workspace.shared)
                     .importFile(url: url, delimiter: ",", headerRow: true) { p in
-                        Task { @MainActor in self?.progress = p }
+                        Task { @MainActor in self.progress = p }
                     }
             } catch {
-                await MainActor.run { self?.errorMessage = error.localizedDescription }
+                await MainActor.run { self.errorMessage = error.localizedDescription }
             }
             try? FileManager.default.removeItem(at: url)
             await MainActor.run {
-                self?.importing = false
-                self?.progress = nil
-                self?.reload()
+                self.importing = false
+                self.progress = nil
+                self.reload()
             }
         }
     }

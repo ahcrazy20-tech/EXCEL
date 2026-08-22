@@ -332,7 +332,10 @@ final class XLSXImporter {
 
     /// Imports a .xlsx/.xlsm workbook. Returns the created workbook id.
     func importWorkbook(url: URL, headerRow: Bool, progress: @escaping (ImportProgress) -> Void) throws -> Int64 {
-        guard let archive = try? Archive(url: url, accessMode: .read) else {
+        let archive: Archive
+        do {
+            archive = try Archive(url: url, accessMode: .read, pathEncoding: nil)
+        } catch {
             throw ImportError.corrupt("not a valid xlsx container")
         }
         let work = FileManager.default.temporaryDirectory
