@@ -5,6 +5,9 @@ options:
     iOS: "16.0"
   createIntermediateGroups: true
   groupSortPosition: top
+  # Keep the .pbxproj readable by Xcode 14/15 runners (objectVersion 77 = Xcode 16 only).
+  objectVersion: 54
+  xcodeVersion: "15.4"
 
 packages:
   ZIPFoundation:
