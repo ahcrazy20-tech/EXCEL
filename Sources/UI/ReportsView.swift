@@ -116,7 +116,7 @@ struct ReportDetailView: View {
 
     private func narrate() {
         aiBusy = true
-        let client = AIClient(config: settings.aiConfig)
+        let client = settings.aiRouter
         let body = String(report.body.prefix(9000))
         let lang = settings.language.rawValue
         Task {

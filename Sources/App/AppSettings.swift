@@ -123,7 +123,26 @@ enum L10n {
         "common.count": ("Count", "العدد"),
         "common.value": ("Value", "القيمة"),
         "common.column": ("Column", "العمود"),
-        "common.share": ("Share", "مشاركة")
+        "common.share": ("Share", "مشاركة"),
+
+        "ai.free": ("Free providers", "مزوّدون مجانيون"),
+        "ai.other": ("Other providers", "مزوّدون آخرون"),
+        "ai.freeBadge": ("FREE", "مجاني"),
+        "ai.primary": ("Primary", "أساسي"),
+        "ai.none": ("Not configured", "غير مفعّل"),
+        "ai.active": ("Order", "ترتيب المحاولة"),
+        "ai.fallback": ("Auto fallback", "تبديل تلقائي عند الفشل"),
+        "ai.fallback.note": ("If a provider fails or hits its rate limit, the next configured provider is tried automatically.",
+                             "لو مزوّد فشل أو وصل حد الاستخدام، يتم تجربة المزوّد التالي تلقائيًا."),
+        "ai.freeHint": ("Groq, Gemini, Cerebras, Mistral, OpenRouter and GitHub Models all offer free keys with no credit card.",
+                        "Groq و Gemini و Cerebras و Mistral و OpenRouter و GitHub Models كلها توفّر مفاتيح مجانية بدون بطاقة."),
+        "ai.getKey": ("Get a free API key", "احصل على مفتاح مجاني"),
+        "ai.removeKey": ("Remove key", "حذف المفتاح"),
+        "ai.fetchModels": ("Fetch available models", "جلب الموديلات المتاحة"),
+        "ai.testOK": ("Connection works", "الاتصال ناجح"),
+        "ai.testFail": ("Connection failed", "فشل الاتصال"),
+        "ai.makePrimary": ("Set as primary provider", "اجعله المزوّد الأساسي"),
+        "ai.usedProvider": ("Answered by", "تمت الإجابة عبر")
     ]
 }
 
@@ -141,9 +160,10 @@ final class AppSettings: ObservableObject {
     @AppStorage("freezeFirstColumn") var freezeFirstColumn: Bool = true { didSet { objectWillChange.send() } }
     @AppStorage("headerRowDefault") var headerRowDefault: Bool = true { didSet { objectWillChange.send() } }
     @AppStorage("haptics") var haptics: Bool = true { didSet { objectWillChange.send() } }
-    @AppStorage("aiProvider") var aiProviderRaw: String = AIProvider.openAI.rawValue { didSet { objectWillChange.send() } }
-    @AppStorage("aiModel") var aiModel: String = "" { didSet { objectWillChange.send() } }
-    @AppStorage("aiBaseURL") var aiBaseURL: String = "" { didSet { objectWillChange.send() } }
+    @AppStorage("aiProvider") var aiProviderRaw: String = AIProvider.groq.rawValue { didSet { objectWillChange.send() } }
+    @AppStorage("aiModelsJSON") var aiModelsJSON: String = "{}" { didSet { objectWillChange.send() } }
+    @AppStorage("aiBaseURLsJSON") var aiBaseURLsJSON: String = "{}" { didSet { objectWillChange.send() } }
+    @AppStorage("aiFallback") var aiFallbackEnabled: Bool = true { didSet { objectWillChange.send() } }
 
     private init() {
         L10n.language = AppLanguage(rawValue: languageRaw) ?? .ar
@@ -163,22 +183,85 @@ final class AppSettings: ObservableObject {
     }
 
     var aiProvider: AIProvider {
-        get { AIProvider(rawValue: aiProviderRaw) ?? .openAI }
-        set { aiProviderRaw = newValue.rawValue }
+        get { AIProvider(rawValue: aiProviderRaw) ?? .groq }
+        set { aiProviderRaw = newValue.rawValue; objectWillChange.send() }
     }
 
-    var apiKey: String {
-        get { Keychain.get(aiProvider.keychainKey) ?? "" }
-        set { Keychain.set(newValue, for: aiProvider.keychainKey); objectWillChange.send() }
+    // MARK: Per-provider keys, models and endpoints
+
+    func apiKey(for provider: AIProvider) -> String {
+        Keychain.get(provider.keychainKey) ?? ""
     }
 
-    var hasAI: Bool { !apiKey.isEmpty }
+    func setAPIKey(_ key: String, for provider: AIProvider) {
+        Keychain.set(key.trimmingCharacters(in: .whitespacesAndNewlines), for: provider.keychainKey)
+        objectWillChange.send()
+    }
 
-    var aiConfig: AIConfig {
-        AIConfig(provider: aiProvider,
-                 model: aiModel.isEmpty ? aiProvider.defaultModel : aiModel,
-                 baseURL: aiBaseURL.isEmpty ? aiProvider.defaultBaseURL : aiBaseURL,
-                 apiKey: apiKey)
+    func hasKey(_ provider: AIProvider) -> Bool { !apiKey(for: provider).isEmpty }
+
+    private func dictionary(_ json: String) -> [String: String] {
+        guard let data = json.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return [:] }
+        return dict
+    }
+
+    private func encode(_ dict: [String: String]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: dict) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    func model(for provider: AIProvider) -> String {
+        let stored = dictionary(aiModelsJSON)[provider.rawValue] ?? ""
+        return stored.isEmpty ? provider.defaultModel : stored
+    }
+
+    func setModel(_ model: String, for provider: AIProvider) {
+        var dict = dictionary(aiModelsJSON)
+        dict[provider.rawValue] = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        aiModelsJSON = encode(dict)
+    }
+
+    func baseURL(for provider: AIProvider) -> String {
+        let stored = dictionary(aiBaseURLsJSON)[provider.rawValue] ?? ""
+        return stored.isEmpty ? provider.defaultBaseURL : stored
+    }
+
+    func setBaseURL(_ url: String, for provider: AIProvider) {
+        var dict = dictionary(aiBaseURLsJSON)
+        dict[provider.rawValue] = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        aiBaseURLsJSON = encode(dict)
+    }
+
+    func config(for provider: AIProvider) -> AIConfig {
+        AIConfig(provider: provider,
+                 model: model(for: provider),
+                 baseURL: baseURL(for: provider),
+                 apiKey: apiKey(for: provider))
+    }
+
+    /// Every provider that is ready to be used, primary first (used for automatic fallback).
+    var configuredProviders: [AIProvider] {
+        var list: [AIProvider] = []
+        if hasKey(aiProvider) || (aiProvider == .custom && !baseURL(for: .custom).isEmpty) {
+            list.append(aiProvider)
+        }
+        for p in AIProvider.ordered where p != aiProvider {
+            if hasKey(p) || (p == .custom && !baseURL(for: .custom).isEmpty && hasKey(.custom)) {
+                list.append(p)
+            }
+        }
+        return list
+    }
+
+    var hasAI: Bool { !configuredProviders.isEmpty }
+
+    var aiConfig: AIConfig { config(for: aiProvider) }
+
+    /// Router that tries the primary provider then the rest (when fallback is on).
+    var aiRouter: AIRouter {
+        let providers = aiFallbackEnabled ? configuredProviders : Array(configuredProviders.prefix(1))
+        return AIRouter(configs: providers.map { config(for: $0) })
     }
 
     func haptic(_ style: UIImpactFeedbackGenerator.FeedbackStyle = .light) {

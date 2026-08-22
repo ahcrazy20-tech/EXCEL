@@ -1,33 +1,45 @@
 import Foundation
 
 enum AIProvider: String, CaseIterable, Identifiable, Codable {
-    case openAI, gemini, openRouter, custom
+    case groq, gemini, cerebras, mistral, openRouter, githubModels, openAI, custom
 
     var id: String { rawValue }
 
     var display: String {
         switch self {
-        case .openAI: return "OpenAI"
+        case .groq: return "Groq"
         case .gemini: return "Google Gemini"
+        case .cerebras: return "Cerebras"
+        case .mistral: return "Mistral AI"
         case .openRouter: return "OpenRouter"
+        case .githubModels: return "GitHub Models"
+        case .openAI: return "OpenAI"
         case .custom: return "Custom (OpenAI-compatible)"
         }
     }
 
     var defaultModel: String {
         switch self {
+        case .groq: return "llama-3.3-70b-versatile"
+        case .gemini: return "gemini-2.5-flash"
+        case .cerebras: return "llama-3.3-70b"
+        case .mistral: return "mistral-small-latest"
+        case .openRouter: return "meta-llama/llama-3.3-70b-instruct:free"
+        case .githubModels: return "openai/gpt-4o-mini"
         case .openAI: return "gpt-4o-mini"
-        case .gemini: return "gemini-1.5-flash"
-        case .openRouter: return "openai/gpt-4o-mini"
         case .custom: return "gpt-4o-mini"
         }
     }
 
     var defaultBaseURL: String {
         switch self {
-        case .openAI: return "https://api.openai.com/v1"
+        case .groq: return "https://api.groq.com/openai/v1"
         case .gemini: return "https://generativelanguage.googleapis.com/v1beta"
+        case .cerebras: return "https://api.cerebras.ai/v1"
+        case .mistral: return "https://api.mistral.ai/v1"
         case .openRouter: return "https://openrouter.ai/api/v1"
+        case .githubModels: return "https://models.github.ai/inference"
+        case .openAI: return "https://api.openai.com/v1"
         case .custom: return ""
         }
     }
@@ -138,7 +150,9 @@ final class AIClient {
                 ["role": "user", "content": user]
             ]
         ]
-        if jsonMode { body["response_format"] = ["type": "json_object"] }
+        if jsonMode, config.provider != .githubModels, config.provider != .cerebras {
+            body["response_format"] = ["type": "json_object"]
+        }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: req)

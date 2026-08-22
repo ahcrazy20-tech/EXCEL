@@ -3,9 +3,6 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var library: Library
-    @State private var apiKeyField = ""
-    @State private var testing = false
-    @State private var testResult: String?
     @State private var confirmClear = false
 
     var body: some View {
@@ -38,41 +35,32 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Picker("settings.provider".loc, selection: Binding(
-                        get: { settings.aiProvider },
-                        set: { settings.aiProvider = $0; apiKeyField = settings.apiKey })) {
-                        ForEach(AIProvider.allCases) { p in Text(p.display).tag(p) }
-                    }
-                    TextField(settings.aiProvider.defaultModel, text: $settings.aiModel)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                    if settings.aiProvider == .custom {
-                        TextField("settings.baseURL".loc, text: $settings.aiBaseURL)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                            .keyboardType(.URL)
-                    }
-                    SecureField("settings.apiKey".loc, text: $apiKeyField)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                    HStack {
-                        Button("settings.save".loc) {
-                            settings.apiKey = apiKeyField.trimmingCharacters(in: .whitespacesAndNewlines)
-                            settings.haptic()
-                            testResult = "✓"
+                    NavigationLink {
+                        AIProvidersView()
+                    } label: {
+                        HStack {
+                            Label("settings.ai".loc, systemImage: "sparkles")
+                            Spacer()
+                            if settings.hasAI {
+                                Text(settings.aiProvider.display)
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Text("ai.none".loc).font(.caption).foregroundStyle(.orange)
+                            }
                         }
-                        Spacer()
-                        Button("settings.test".loc) { test() }
-                            .disabled(apiKeyField.isEmpty || testing)
                     }
-                    if testing { ProgressView() }
-                    if let testResult {
-                        Text(testResult).font(.caption).foregroundStyle(testResult.hasPrefix("✓") ? .green : .red)
+                    if settings.hasAI {
+                        HStack {
+                            Text("ai.active".loc).font(.caption)
+                            Spacer()
+                            Text(settings.configuredProviders.map { $0.display }.joined(separator: " → "))
+                                .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                        }
                     }
                 } header: {
                     Text("settings.ai".loc)
                 } footer: {
-                    Text("settings.aiNote".loc).font(.caption2)
+                    Text("ai.freeHint".loc).font(.caption2)
                 }
 
                 Section("settings.storage".loc) {
@@ -106,7 +94,6 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("settings.title".loc)
-            .onAppear { apiKeyField = settings.apiKey }
             .alert("settings.clearAll".loc, isPresented: $confirmClear) {
                 Button("common.delete".loc, role: .destructive) { library.deleteAll() }
                 Button("common.cancel".loc, role: .cancel) {}
@@ -125,26 +112,4 @@ struct SettingsView: View {
         }
     }
 
-    private func test() {
-        testing = true
-        testResult = nil
-        var config = settings.aiConfig
-        config.apiKey = apiKeyField.trimmingCharacters(in: .whitespacesAndNewlines)
-        let client = AIClient(config: config)
-        Task {
-            do {
-                let reply = try await client.complete(system: "Reply with the single word: ready",
-                                                      user: "ping", jsonMode: false)
-                await MainActor.run {
-                    testResult = "✓ " + String(reply.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
-                    testing = false
-                }
-            } catch {
-                await MainActor.run {
-                    testResult = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                    testing = false
-                }
-            }
-        }
-    }
 }

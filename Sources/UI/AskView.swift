@@ -14,6 +14,7 @@ struct AskView: View {
     @State private var narrative: String?
     @State private var errorText: String?
     @State private var shareItem: ShareItem?
+    @State private var usedProvider: String?
 
     private var suggestions: [String] {
         NLQueryParser.suggestions(for: vm.sheet, arabic: settings.language == .ar)
@@ -109,6 +110,10 @@ struct AskView: View {
                 Image(systemName: "brain")
                 Text("ask.plan".loc).font(.caption.bold())
                 Spacer()
+                if let usedProvider {
+                    Text("\("ai.usedProvider".loc): \(usedProvider)")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 Text("\(Int(plan.confidence * 100))%").font(.caption2).foregroundStyle(.secondary)
             }
             Text(plan.explanation.isEmpty ? plan.kind.rawValue : plan.explanation)
@@ -182,7 +187,7 @@ struct AskView: View {
         let engine = vm.engine
         let sheet = vm.sheet
         let arabic = settings.language == .ar
-        let ai: AIClient? = (settings.hasAI && useAI) ? AIClient(config: settings.aiConfig) : nil
+        let ai: AIRouter? = (settings.hasAI && useAI) ? settings.aiRouter : nil
 
         Task {
             do {
@@ -202,6 +207,7 @@ struct AskView: View {
                     plan = computedPlan
                     result = executed.0
                     narrative = executed.1
+                    usedProvider = ai?.lastUsedProvider?.display
                     running = false
                 }
 
