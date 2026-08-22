@@ -178,7 +178,8 @@ struct NLQueryParser {
         // Top / bottom N without an explicit function -> ranking rows by a numeric column
         if has(NLQueryParser.topWords) || has(NLQueryParser.bottomWords) {
             let desc = !has(NLQueryParser.bottomWords)
-            let sortCol = numericMention ?? sheet.columns.first(where: { $0.kind == .number })
+            let sortCol: ColumnInfo? = numericMention.flatMap { m in sheet.columns.first(where: { $0.index == m.index }) }
+                ?? sheet.columns.first(where: { $0.kind == .number })
             if let sortCol {
                 plan.kind = .topN
                 plan.analysis.query.sorts = [SortSpec(columnIndex: sortCol.index, ascending: !desc)]
