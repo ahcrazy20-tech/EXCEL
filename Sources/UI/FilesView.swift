@@ -95,6 +95,13 @@ struct FilesView: View {
                         } label: {
                             SheetRow(sheet: sheet)
                         }
+                        .swipeActions {
+                            Button(role: .destructive) {
+                                library.delete(workbook: wb)
+                            } label: {
+                                Label("files.delete".loc, systemImage: "trash")
+                            }
+                        }
                     }
                 } header: {
                     HStack {
@@ -108,13 +115,6 @@ struct FilesView: View {
                 } footer: {
                     Text("\(ReportBuilder.formatInt(wb.totalRows)) \("files.rows".loc) • \(wb.sheets.count) \("files.sheets".loc)")
                         .font(.caption2)
-                }
-                .swipeActions {
-                    Button(role: .destructive) {
-                        library.delete(workbook: wb)
-                    } label: {
-                        Label("files.delete".loc, systemImage: "trash")
-                    }
                 }
             }
         }

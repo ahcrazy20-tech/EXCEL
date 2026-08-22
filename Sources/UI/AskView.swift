@@ -182,7 +182,7 @@ struct AskView: View {
         let engine = vm.engine
         let sheet = vm.sheet
         let arabic = settings.language == .ar
-        let ai = settings.hasAI && useAI ? AIClient(config: settings.aiConfig) : nil
+        let ai: AIClient? = (settings.hasAI && useAI) ? AIClient(config: settings.aiConfig) : nil
 
         Task {
             do {

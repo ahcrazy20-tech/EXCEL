@@ -226,8 +226,8 @@ enum Exporter {
 
         let pageSize = CGRect(x: 0, y: 0, width: 595.2, height: 841.8) // A4 @72dpi
         let printable = pageSize.insetBy(dx: 28, dy: 34)
-        renderer.setValue(pageSize, forKey: "paperRect")
-        renderer.setValue(printable, forKey: "printableRect")
+        renderer.setValue(NSValue(cgRect: pageSize), forKey: "paperRect")
+        renderer.setValue(NSValue(cgRect: printable), forKey: "printableRect")
 
         let data = NSMutableData()
         UIGraphicsBeginPDFContextToData(data, pageSize, nil)

@@ -1,1 +1,111 @@
-# EXCEL
+# SheetX — عارض ومحلّل ملفات Excel الضخمة لـ iOS (TrollStore)
+
+تطبيق iOS أصلي (SwiftUI + SQLite) يفتح ملفات **XLSX / CSV / TSV / JSON** الضخمة (ملايين الصفوف) بسلاسة،
+ويسمح لك بأن تكتب أمرًا بالعربي أو الإنجليزي فيبحث ويجمّع ويعمل لك **تقريرًا** جاهزًا للمشاركة.
+
+> مبني ليعمل على **iPhone 11 Pro Max / iOS 16.4 مع TrollStore** — يُبنى كـ IPA **غير موقّع** وتثبّته مباشرة.
+
+---
+
+## المزايا
+
+**المحرك (السرعة)**
+- استيراد **متدفّق (streaming)** لملفات XLSX: يفكّ ضغط ورقة العمل على القرص ويقرأ الـ XML عنصرًا عنصرًا (SAX) — لا يُحمَّل الملف كله في الذاكرة.
+- كل ورقة تُفهرَس في **SQLite** (WAL + mmap + دفعات إدراج 20 ألف صف) → التمرير والبحث والفرز فوري حتى مع ملايين الصفوف.
+- قارئ CSV/TSV متوافق مع RFC‑4180 يقرأ على دفعات 4MB (يدعم الاقتباسات، الفواصل المختلفة، BOM، الترميز العربي UTF‑8).
+- كشف تلقائي للفاصل، وأنواع الأعمدة (رقم / نص / تاريخ / منطقي)، وتحويل تواريخ Excel التسلسلية إلى تواريخ حقيقية.
+- إنشاء فهارس (Indexes) عند الفرز/الفلترة لتسريع العمليات المتكررة.
+- جدول بعرض افتراضي (Virtualized): تُحمَّل صفحات 200 صف عند الحاجة فقط، مع تحرير الصفحات البعيدة من الذاكرة.
+
+**العرض**
+- رأس أعمدة مثبّت، ترقيم صفوف، ألوان تبادلية، عرض/ارتفاع/خط قابل للتعديل.
+- بحث فوري في كل الأعمدة، فلاتر متعددة (14 عاملًا: يساوي، يحتوي، أكبر من، بين، فارغ، ضمن قائمة…) مع AND/OR.
+- ضغط على رأس العمود = فرز، إحصاءات العمود، أكثر القيم تكرارًا، وفلترة بضغطة.
+- تفاصيل الصف الكاملة + نسخ.
+- إخفاء/إظهار الأعمدة، والقفز إلى رقم صف.
+
+**التحليل والتقارير**
+- **اسأل بياناتك**: اكتب أمرًا بالعربي أو الإنجليزي مثل:
+  - `مجموع المبلغ حسب المدينة`
+  - `أعلى 10 حسب الكمية`
+  - `القيم المكررة في العميل`
+  - `الصفوف اللي السعر أكبر من 1000`
+  - `اعمل تقرير ملخص للشيت`
+  - `Top 20 by Total` / `Count rows by Status`
+- محرك محلي بالكامل (بدون إنترنت) يفهم الأمر ويحوّله إلى استعلام SQL آمن، **أو** استخدام مفتاح AI (OpenAI / Gemini / OpenRouter / أي API متوافق) لفهم أعقد.
+- تقرير كامل تلقائي: عدد الصفوف، ملف تعريف كل عمود، مجموع/متوسط/وسيط/انحراف معياري/أدنى/أعلى، أكثر القيم شيوعًا، تجميعات، وفحص **جودة البيانات** (قيم فارغة، أعمدة ثابتة، قيم شاذة).
+- رسوم بيانية (أعمدة / دائري / خطي) على أي تجميعة.
+- تصدير: **CSV (بتدفق كامل بدون حد) / XLSX / JSON / Markdown / HTML / PDF** ومشاركة عبر شيت المشاركة.
+
+**الخصوصية**
+- كل شيء يعمل على الجهاز. عند تفعيل الـ AI تُرسل **أسماء الأعمدة والإحصاءات المحسوبة فقط** — لا تُرسل صفوف الملف.
+- مفتاح الـ API يُحفظ في **Keychain**.
+
+**الواجهة**
+- عربي (RTL) + إنجليزي مع تبديل فوري، ووضع فاتح/داكن/تلقائي، واهتزاز اختياري.
+
+---
+
+## البناء (IPA غير موقّع لـ TrollStore)
+
+### الطريقة الأسهل: GitHub Actions
+ملف الـ workflow موجود في `ci/build-ipa.yml`. انسخه إلى مكانه الصحيح ثم ادفعه:
+
+```bash
+mkdir -p .github/workflows
+cp ci/build-ipa.yml .github/workflows/build-ipa.yml
+git add .github/workflows/build-ipa.yml
+git commit -m "add IPA workflow"
+git push
+```
+
+> ملاحظة: لم أستطع دفع الملف داخل `.github/workflows` مباشرة لأن صلاحية `workflows` غير ممنوحة لتطبيق GitHub المستخدم — لذلك وضعته في `ci/`.
+
+بعد الدفع: افتح **Actions → Build unsigned IPA (TrollStore) → Run workflow**، وعند الانتهاء نزّل الملف من **Artifacts**:
+`SheetX-unsigned-ipa → SheetX-unsigned.ipa`.
+
+### البناء محليًا على macOS
+```bash
+brew install xcodegen
+xcodegen generate
+xcodebuild -project SheetX.xcodeproj -scheme SheetX -configuration Release \
+  -sdk iphoneos -derivedDataPath build \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+
+mkdir -p out/Payload
+cp -R build/Build/Products/Release-iphoneos/SheetX.app out/Payload/
+(cd out && zip -qry SheetX-unsigned.ipa Payload)
+```
+
+### التثبيت على الأيفون
+1. انقل `SheetX-unsigned.ipa` إلى الجهاز (Files / AirDrop / تحميل مباشر).
+2. افتح **TrollStore → + → اختر الملف → Install**.
+3. التطبيق يظهر باسم **SheetX**، ويقبل فتح الملفات مباشرة من تطبيق "الملفات" (Open in / Share → SheetX).
+
+---
+
+## طريقة الاستخدام السريعة
+1. اضغط **+** واستورد ملف (أو جرّب **تحميل بيانات تجريبية** = 20 ألف صف طلبات).
+2. افتح الورقة → استخدم البحث والفلاتر، أو اضغط ✨ **اسأل** واكتب أمرك بالعربي.
+3. من قائمة **⋯** → إنشاء تقرير كامل، ثم من تبويب **التقارير** شاركه PDF/HTML/Markdown.
+
+---
+
+## بنية المشروع
+```
+project.yml                 # مواصفات XcodeGen (iOS 16، ZIPFoundation، libsqlite3)
+ci/build-ipa.yml            # GitHub Actions: بناء IPA غير موقّع
+Sources/
+  App/        SheetXApp, Library (الاستيراد), SheetViewModel (الصفحات), AppSettings + الترجمة
+  Core/       Database (SQLite), Workspace (الفهرس), TableWriter, XLSXImporter, CSVImporter,
+              QueryEngine (فلاتر/تجميعات/إحصاءات), NLQueryParser (أوامر عربي/إنجليزي),
+              AIClient, ReportBuilder + Markdown, Exporter (CSV/XLSX/JSON/HTML/PDF), Keychain
+  UI/         FilesView, SheetScreen, DataGridView, FilterViews, AnalysisViews (إحصاءات/رسوم/تصدير),
+              AskView, ReportsView, SettingsView
+  Support/    Info.plist, Assets.xcassets (الأيقونة)
+```
+
+## حدود معروفة
+- ملفات `.xls` القديمة (Excel 97‑2003) غير مدعومة — احفظها كـ `.xlsx`.
+- الصيغ (formulas) تُقرأ كقيمها المحسوبة المخزّنة داخل الملف.
+- تصدير XLSX/JSON محدود بعدد صفوف (افتراضي 100 ألف) لحماية الذاكرة؛ CSV بلا حد.

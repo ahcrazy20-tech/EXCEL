@@ -37,7 +37,7 @@ final class Library: ObservableObject {
 
     func cancelImport() { cancelBox.cancel() }
 
-    static let supportedTypes: [UTType] = {
+    nonisolated static let supportedTypes: [UTType] = {
         var types: [UTType] = [.commaSeparatedText, .tabSeparatedText, .json, .plainText, .text, .data]
         if let xlsx = UTType(filenameExtension: "xlsx") { types.insert(xlsx, at: 0) }
         if let xlsm = UTType(filenameExtension: "xlsm") { types.insert(xlsm, at: 1) }
@@ -110,7 +110,7 @@ final class Library: ObservableObject {
         }
     }
 
-    static func stageLocally(_ url: URL) throws -> URL {
+    nonisolated static func stageLocally(_ url: URL) throws -> URL {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("staging", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let dest = dir.appendingPathComponent(UUID().uuidString + "-" + url.lastPathComponent)
