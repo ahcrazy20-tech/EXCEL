@@ -34,15 +34,12 @@ struct FilesView: View {
                 }
             }
             .searchable(text: $searchText)
-            .fileImporter(isPresented: $showImporter,
-                          allowedContentTypes: Library.supportedTypes,
-                          allowsMultipleSelection: true) { result in
-                switch result {
-                case .success(let urls):
+            .sheet(isPresented: $showImporter) {
+                DocumentPicker { urls in
+                    showImporter = false
                     library.importFiles(urls, headerRow: settings.headerRowDefault)
-                case .failure(let error):
-                    library.errorMessage = error.localizedDescription
                 }
+                .ignoresSafeArea()
             }
             .overlay(alignment: .bottom) {
                 if library.importing { importBanner }

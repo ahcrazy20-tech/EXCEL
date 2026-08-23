@@ -64,6 +64,9 @@ targets:
             CFBundleTypeRole: Viewer
             LSItemContentTypes:
               - org.openxmlformats.spreadsheetml.sheet
+              - org.openxmlformats.spreadsheetml.sheet.macroenabled
+              - org.openxmlformats.spreadsheetml.template
+              - org.openxmlformats.spreadsheetml.template.macroenabled
               - com.microsoft.excel.xls
               - public.comma-separated-values-text
               - public.tab-separated-values-text

@@ -38,9 +38,23 @@ final class Library: ObservableObject {
     func cancelImport() { cancelBox.cancel() }
 
     nonisolated static let supportedTypes: [UTType] = {
-        var types: [UTType] = [.commaSeparatedText, .tabSeparatedText, .json, .plainText, .text, .data]
-        if let xlsx = UTType(filenameExtension: "xlsx") { types.insert(xlsx, at: 0) }
-        if let xlsm = UTType(filenameExtension: "xlsm") { types.insert(xlsm, at: 1) }
+        var types: [UTType] = []
+        // Excel formats — resolve by system identifier first, then by extension.
+        let excel: [(String, String)] = [
+            ("org.openxmlformats.spreadsheetml.sheet", "xlsx"),               // .xlsx
+            ("org.openxmlformats.spreadsheetml.sheet.macroenabled", "xlsm"),  // .xlsm
+            ("org.openxmlformats.spreadsheetml.template", "xltx"),            // .xltx
+            ("org.openxmlformats.spreadsheetml.template.macroenabled", "xltm")
+        ]
+        for (identifier, ext) in excel {
+            if let t = UTType(identifier) {
+                types.append(t)
+            } else if let t = UTType(filenameExtension: ext) {
+                types.append(t)
+            }
+        }
+        types.append(contentsOf: [.commaSeparatedText, .tabSeparatedText, .json,
+                                  .plainText, .text, .data, .item])
         return types
     }()
 
@@ -84,7 +98,7 @@ final class Library: ObservableObject {
         defer { try? FileManager.default.removeItem(at: localURL) }
 
         switch ext {
-        case "xlsx", "xlsm", "xltx":
+        case "xlsx", "xlsm", "xltx", "xltm":
             _ = try XLSXImporter(workspace: ws, cancelFlag: cancel)
                 .importWorkbook(url: localURL, headerRow: headerRow, progress: report)
         case "csv", "tsv", "txt", "tab":
