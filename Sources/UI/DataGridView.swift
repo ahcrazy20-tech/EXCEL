@@ -105,6 +105,7 @@ struct DataGridView: View {
     @ViewBuilder
     private func rowView(_ index: Int) -> some View {
         let values = vm.row(at: index)
+        let fills = vm.fills(page: index / vm.pageSize, offset: index % vm.pageSize)
         HStack(spacing: 0) {
             Text("\(index + 1)")
                 .font(.system(size: fontSize - 2, design: .monospaced))
@@ -115,7 +116,7 @@ struct DataGridView: View {
 
             if let values {
                 ForEach(vm.visibleColumns) { col in
-                    cell(values: values, col: col)
+                    cell(values: values, col: col, fills: fills)
                 }
             } else {
                 ForEach(vm.visibleColumns) { col in
@@ -139,18 +140,26 @@ struct DataGridView: View {
     }
 
     @ViewBuilder
-    private func cell(values: [DBValue], col: ColumnInfo) -> some View {
+    private func cell(values: [DBValue], col: ColumnInfo, fills: [Int: UInt32]?) -> some View {
         // values[0] is the rowid
         let value = col.index + 1 < values.count ? values[col.index + 1] : DBValue.null
         let numeric = col.kind == .number
-        Text(display(value, kind: col.kind))
+        let fillColor = fills?[col.index].map { Color(argb: $0) }
+        let textColor: Color = {
+            guard let fillColor else { return .primary }
+            return fillColor.luminance < 0.55 ? .white : .primary
+        }()
+        return Text(display(value, kind: col.kind))
             .font(.system(size: fontSize, design: numeric ? .monospaced : .default))
-            .foregroundStyle(value.isEmptyText ? Color.secondary.opacity(0.5) : Color.primary)
+            .foregroundStyle(value.isEmptyText
+                             ? (fillColor != nil ? textColor.opacity(0.55) : Color.secondary.opacity(0.5))
+                             : textColor)
             .lineLimit(1)
             .truncationMode(.tail)
             .padding(.horizontal, 8)
             .frame(width: vm.width(for: col, default: defaultWidth), height: rowHeight,
                    alignment: numeric ? .trailing : .leading)
+            .background(fillColor ?? Color.clear)
             .overlay(Rectangle().frame(width: 0.5).foregroundStyle(Color(uiColor: .separator).opacity(0.6)), alignment: .trailing)
     }
 

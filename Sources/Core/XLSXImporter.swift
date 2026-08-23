@@ -124,12 +124,27 @@ private final class SharedStringsParser: NSObject, XMLParserDelegate {
 private final class StylesParser: NSObject, XMLParserDelegate {
     /// styleIndex -> isDateFormat
     var dateStyles: Set<Int> = []
+    /// styleIndex -> fill colour (ARGB), skipping "no fill" and plain white.
+    var fillColors: [Int: UInt32] = [:]
     private var customDateFormats: Set<Int> = []
     private var inCellXfs = false
     private var xfIndex = 0
 
+    // fills parsing state
+    private let themePalette: [UInt32]
+    private var inFills = false
+    private var inFill = false
+    private var solidPattern = false
+    private var fgARGB: UInt32?
+    private var fillTable: [UInt32?] = []   // fillId -> colour (nil = none)
+    private var xfFills: [UInt32?] = []     // styleIndex -> colour
+
     private static let builtinDateIDs: Set<Int> = [14, 15, 16, 17, 18, 19, 20, 21, 22,
                                                    27, 30, 36, 45, 46, 47, 50, 57, 58]
+
+    init(themePalette: [UInt32] = []) {
+        self.themePalette = themePalette
+    }
 
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?,
                 qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
@@ -146,15 +161,29 @@ private final class StylesParser: NSObject, XMLParserDelegate {
                     }
                 }
             }
+        case "fills":
+            inFills = true
+            fillTable.removeAll()
+        case "fill" where inFills:
+            inFill = true
+            solidPattern = false
+            fgARGB = nil
+        case "patternFill" where inFill:
+            solidPattern = (attributeDict["patternType"] == "solid")
+        case "fgColor" where inFill:
+            fgARGB = XLSXColor.resolve(attributeDict, theme: themePalette)
         case "cellXfs":
             inCellXfs = true
             xfIndex = 0
+            xfFills.removeAll()
         case "xf":
             if inCellXfs {
                 if let idStr = attributeDict["numFmtId"], let id = Int(idStr),
                    StylesParser.builtinDateIDs.contains(id) || customDateFormats.contains(id) {
                     dateStyles.insert(xfIndex)
                 }
+                let fillID = Int(attributeDict["fillId"] ?? "") ?? 0
+                xfFills.append(fillID < fillTable.count ? fillTable[fillID] : nil)
                 xfIndex += 1
             }
         default: break
@@ -162,7 +191,26 @@ private final class StylesParser: NSObject, XMLParserDelegate {
     }
 
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
-        if elementName == "cellXfs" { inCellXfs = false }
+        switch elementName {
+        case "fill" where inFills:
+            inFill = false
+            fillTable.append(solidPattern ? fgARGB : nil)
+        case "fills":
+            inFills = false
+        case "cellXfs":
+            inCellXfs = false
+        default: break
+        }
+    }
+
+    func parserDidEndDocument(_ parser: XMLParser) {
+        // White fills look identical to no-fill in the grid; skipping them keeps
+        // the colour table (and the DB) small.
+        for (style, fill) in xfFills.enumerated() {
+            if let c = fill, c != 0xFFFFFFFF {
+                fillColors[style] = c
+            }
+        }
     }
 }
 
@@ -206,12 +254,16 @@ final class SheetXMLParser: NSObject, XMLParserDelegate {
     private let sharedStrings: [String]
     private let dateStyles: Set<Int>
     private let date1904: Bool
+    private let fillColors: [Int: UInt32]           // style index -> fill ARGB
     private let onRow: ([DBValue]) throws -> Void
+    private let onFillRow: (Int, [Int: UInt32]) -> Void
 
     private var currentRow: [DBValue] = []
     private var cellColumn = 0
     private var cellType = ""
     private var cellStyle = -1
+    private var cellFill: UInt32?
+    private var rowFills: [Int: UInt32] = [:]
     private var textBuffer = ""
     private var capturing = false
     private var inRow = false
@@ -223,11 +275,15 @@ final class SheetXMLParser: NSObject, XMLParserDelegate {
     var shouldCancel: () -> Bool = { false }
 
     init(sharedStrings: [String], dateStyles: Set<Int>, date1904: Bool,
-         onRow: @escaping ([DBValue]) throws -> Void) {
+         fillColors: [Int: UInt32] = [:],
+         onRow: @escaping ([DBValue]) throws -> Void,
+         onFillRow: @escaping (Int, [Int: UInt32]) -> Void = { _, _ in }) {
         self.sharedStrings = sharedStrings
         self.dateStyles = dateStyles
         self.date1904 = date1904
+        self.fillColors = fillColors
         self.onRow = onRow
+        self.onFillRow = onFillRow
     }
 
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?,
@@ -240,6 +296,7 @@ final class SheetXMLParser: NSObject, XMLParserDelegate {
         case "c":
             cellType = attributeDict["t"] ?? "n"
             cellStyle = Int(attributeDict["s"] ?? "") ?? -1
+            cellFill = cellStyle >= 0 ? fillColors[cellStyle] : nil
             if let ref = attributeDict["r"], let idx = CellRef.columnIndex(fromRef: ref) {
                 cellColumn = idx
             }
@@ -271,6 +328,8 @@ final class SheetXMLParser: NSObject, XMLParserDelegate {
             } else if cellColumn < currentRow.count {
                 currentRow[cellColumn] = value
             }
+            if let fill = cellFill { rowFills[cellColumn] = fill }
+            cellFill = nil
             cellColumn += 1
             textBuffer = ""
         case "row":
@@ -280,10 +339,12 @@ final class SheetXMLParser: NSObject, XMLParserDelegate {
                 do {
                     try onRow(currentRow)
                     emittedRows += 1
+                    if !rowFills.isEmpty { onFillRow(emittedRows, rowFills) }
                 } catch {
                     thrownError = error
                     parser.abortParsing()
                 }
+                rowFills.removeAll(keepingCapacity: true)
             }
             if emittedRows & 0x3FF == 0, shouldCancel() {
                 thrownError = ImportError.cancelled
@@ -331,7 +392,8 @@ final class XLSXImporter {
     }
 
     /// Imports a .xlsx/.xlsm workbook. Returns the created workbook id.
-    func importWorkbook(url: URL, headerRow: Bool, progress: @escaping (ImportProgress) -> Void) throws -> Int64 {
+    func importWorkbook(url: URL, headerMode: HeaderMode, importColors: Bool = true,
+                        progress: @escaping (ImportProgress) -> Void) throws -> Int64 {
         let archive: Archive
         do {
             archive = try Archive(url: url, accessMode: .read, pathEncoding: nil)
@@ -372,12 +434,20 @@ final class XLSXImporter {
             try? FileManager.default.removeItem(at: sstURL)
         }
 
-        // 3. styles (for date detection)
+        // 3. styles (for date detection + cell fill colours)
+        var themePalette: [UInt32] = []
+        if importColors, let themeData = try data(for: "xl/theme/theme1.xml", in: archive) {
+            let tp = ThemeParser()
+            let p = XMLParser(data: themeData); p.delegate = tp; p.parse()
+            themePalette = XLSXColor.themePalette(fromScheme: tp.scheme)
+        }
         var dateStyles: Set<Int> = []
+        var fillColors: [Int: UInt32] = [:]
         if let stylesData = try data(for: "xl/styles.xml", in: archive) {
-            let sp = StylesParser()
+            let sp = StylesParser(themePalette: themePalette)
             let p = XMLParser(data: stylesData); p.delegate = sp; p.parse()
             dateStyles = sp.dateStyles
+            fillColors = importColors ? sp.fillColors : [:]
         }
 
         // 4. workbook record
@@ -410,8 +480,10 @@ final class XLSXImporter {
                             workbookID: wbID,
                             sharedStrings: sharedStrings,
                             dateStyles: dateStyles,
+                            fillColors: fillColors,
                             date1904: wbParser.date1904,
-                            headerRow: headerRow,
+                            headerMode: headerMode,
+                            workDir: work,
                             sheetProgressBase: 0.1 + 0.9 * (Double(i) / Double(max(1, sheets.count))),
                             sheetProgressSpan: 0.9 / Double(max(1, sheets.count)),
                             progress: progress)
@@ -426,8 +498,9 @@ final class XLSXImporter {
     }
 
     private func importSheet(fileURL: URL, name: String, index: Int, workbookID: Int64,
-                             sharedStrings: [String], dateStyles: Set<Int>, date1904: Bool,
-                             headerRow: Bool, sheetProgressBase: Double, sheetProgressSpan: Double,
+                             sharedStrings: [String], dateStyles: Set<Int>, fillColors: [Int: UInt32],
+                             date1904: Bool, headerMode: HeaderMode, workDir: URL,
+                             sheetProgressBase: Double, sheetProgressSpan: Double,
                              progress: @escaping (ImportProgress) -> Void) throws {
         let sheetID = try workspace.createSheet(workbookID: workbookID, name: name, index: index)
         let tableName = "data_\(sheetID)"
@@ -435,33 +508,58 @@ final class XLSXImporter {
         var header: [String] = []
         var writer: TableWriter?
         var rowsWritten = 0
-        var isFirstRow = true
         let cancel = cancelFlag
 
-        let parserDelegate = SheetXMLParser(sharedStrings: sharedStrings, dateStyles: dateStyles, date1904: date1904) { row in
-            if isFirstRow {
-                isFirstRow = false
-                if headerRow {
-                    header = row.enumerated().map { idx, v in
-                        let s = v.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                        return s.isEmpty ? "Column \(CellRef.name(forIndex: idx))" : s
-                    }
-                    writer = try TableWriter(db: self.workspace.db, tableName: tableName, columnCount: max(1, header.count))
-                    return
-                } else {
-                    header = (0..<max(1, row.count)).map { "Column \(CellRef.name(forIndex: $0))" }
-                    writer = try TableWriter(db: self.workspace.db, tableName: tableName, columnCount: max(1, row.count))
+        // Fill colours are spooled to disk while parsing, then bulk-loaded in one pass.
+        let spool = FillSpool(directory: workDir)
+        defer { spool.remove() }
+
+        // Header detection buffers the first rows (or everything for small sheets)
+        // before deciding which one is the header.
+        var buffer: [[DBValue]] = []
+        var decided = false
+
+        func flushDecision() throws {
+            decided = true
+            let decision = HeaderDetector.decide(mode: headerMode, buffer: buffer)
+            header = decision.header
+            let width = max(header.count, buffer.map { $0.count }.max() ?? 0)
+            writer = try TableWriter(db: workspace.db, tableName: tableName, columnCount: max(1, width))
+            let firstDataIndex = (decision.headerIndex ?? -1) + 1
+            if firstDataIndex < buffer.count, let w = writer {
+                for row in buffer[firstDataIndex...] {
+                    try w.write(row)
+                    rowsWritten += 1
                 }
             }
-            guard let writer else { return }
-            try writer.write(row)
-            rowsWritten += 1
-            if rowsWritten % 5_000 == 0 {
-                progress(ImportProgress(stage: "importing \(name)",
-                                        fraction: sheetProgressBase + sheetProgressSpan * 0.5,
-                                        rowsDone: rowsWritten, sheetName: name))
-            }
+            buffer.removeAll(keepingCapacity: true)
         }
+
+        let parserDelegate = SheetXMLParser(
+            sharedStrings: sharedStrings,
+            dateStyles: dateStyles,
+            date1904: date1904,
+            fillColors: fillColors,
+            onRow: { row in
+                if !decided {
+                    buffer.append(row)
+                    if buffer.count >= HeaderDetector.sampleLimit {
+                        try flushDecision()
+                    }
+                    return
+                }
+                guard let writer else { return }
+                try writer.write(row)
+                rowsWritten += 1
+                if rowsWritten % 5_000 == 0 {
+                    progress(ImportProgress(stage: "importing \(name)",
+                                            fraction: sheetProgressBase + sheetProgressSpan * 0.5,
+                                            rowsDone: rowsWritten, sheetName: name))
+                }
+            },
+            onFillRow: { seq, fills in
+                spool.append(seq: seq, fills: fills)
+            })
         parserDelegate.shouldCancel = cancel
 
         guard let parser = XMLParser(contentsOf: fileURL) else {
@@ -476,6 +574,7 @@ final class XLSXImporter {
             throw err
         }
 
+        if !decided { try flushDecision() }
         let total = try writer?.finish() ?? 0
 
         // Pad header to the real column count.
@@ -489,12 +588,48 @@ final class XLSXImporter {
             _ = try TableWriter(db: workspace.db, tableName: tableName, columnCount: 1).finish()
         }
 
+        // Bulk-load the spooled fill colours (parser seq -> data rowid).
+        let dropped = parserDelegate.emittedRows - rowsWritten
+        try importFillColors(sheetID: sheetID, tableName: tableName, spool: spool, dropped: dropped,
+                             name: name, progress: progress)
+
         let columns = try SchemaInspector.classify(db: workspace.db, tableName: tableName,
                                                    headers: header, dateHints: parserDelegate.dateColumns)
         try workspace.saveColumns(sheetID: sheetID, columns: columns)
         try workspace.setRowCount(sheetID: sheetID, count: total)
         progress(ImportProgress(stage: "finished \(name)", fraction: sheetProgressBase + sheetProgressSpan,
                                 rowsDone: total, sheetName: name))
+    }
+
+    /// Loads the spooled per-row fill colours into a compact side table `data_N_f`.
+    private func importFillColors(sheetID: Int64, tableName: String, spool: FillSpool, dropped: Int,
+                                  name: String, progress: @escaping (ImportProgress) -> Void) throws {
+        guard spool.count > 0 else { return }
+        spool.close()
+        progress(ImportProgress(stage: "importing colors (\(name))", fraction: -1, rowsDone: 0, sheetName: name))
+
+        let fTable = (tableName + "_f").sqlIdentifier
+        try workspace.db.exec("DROP TABLE IF EXISTS \(fTable);")
+        try workspace.db.exec("CREATE TABLE \(fTable)(rowid INTEGER PRIMARY KEY, f TEXT NOT NULL);")
+
+        let reader = try FillSpoolReader(url: spool.url)
+        var done = 0
+        try workspace.db.bulkInsert(sql: "INSERT INTO \(fTable)(rowid,f) VALUES(?,?)") {
+            while let line = reader.nextLine() {
+                guard let semi = line.firstIndex(of: ";"),
+                      let seq = Int(line[..<semi]) else { continue }
+                let rowid = seq - dropped
+                guard rowid > 0 else { continue }   // header/title rows carry no data rowid
+                done += 1
+                if done % 100_000 == 0 {
+                    progress(ImportProgress(stage: "importing colors (\(name))", fraction: -1,
+                                            rowsDone: done, sheetName: name))
+                }
+                return [.int(Int64(rowid)), .text(String(line[line.index(after: semi)...]))]
+            }
+            return nil
+        }
+        try workspace.setHasColors(sheetID: sheetID, true)
     }
 
     // MARK: - zip helpers

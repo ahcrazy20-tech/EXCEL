@@ -29,6 +29,10 @@ struct SheetInfo: Identifiable, Hashable {
     var rowCount: Int
     var columns: [ColumnInfo]
     var index: Int
+    /// True when a `data_N_f` side table with per-cell fill colours exists.
+    var hasColors: Bool = false
+
+    var fillsTableName: String { tableName + "_f" }
 }
 
 struct WorkbookInfo: Identifiable, Hashable {
@@ -77,7 +81,8 @@ final class Workspace: @unchecked Sendable {
             name TEXT NOT NULL,
             table_name TEXT NOT NULL,
             row_count INTEGER NOT NULL DEFAULT 0,
-            sheet_index INTEGER NOT NULL DEFAULT 0
+            sheet_index INTEGER NOT NULL DEFAULT 0,
+            has_colors INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS meta_columns(
             sheet_id INTEGER NOT NULL,
@@ -102,6 +107,10 @@ final class Workspace: @unchecked Sendable {
         CREATE INDEX IF NOT EXISTS idx_sheets_wb ON meta_sheets(workbook_id);
         CREATE INDEX IF NOT EXISTS idx_cols_sheet ON meta_columns(sheet_id);
         """)
+
+        // Added after the first release: per-sheet fill-colour flag.
+        // ALTER fails once the column exists, which is fine.
+        try? db.exec("ALTER TABLE meta_sheets ADD COLUMN has_colors INTEGER NOT NULL DEFAULT 0;")
     }
 
     // MARK: - Reading catalog
@@ -125,7 +134,7 @@ final class Workspace: @unchecked Sendable {
 
     func loadSheets(workbookID: Int64) throws -> [SheetInfo] {
         let rows = try db.query(
-            "SELECT id,name,table_name,row_count,sheet_index FROM meta_sheets WHERE workbook_id=? ORDER BY sheet_index",
+            "SELECT id,name,table_name,row_count,sheet_index,has_colors FROM meta_sheets WHERE workbook_id=? ORDER BY sheet_index",
             [.int(workbookID)])
         return try rows.compactMap { r in
             guard case .int(let sid) = r[0] else { return nil }
@@ -136,7 +145,8 @@ final class Workspace: @unchecked Sendable {
                 tableName: r[2].stringValue,
                 rowCount: Int(r[3].doubleValue ?? 0),
                 columns: try loadColumns(sheetID: sid),
-                index: Int(r[4].doubleValue ?? 0))
+                index: Int(r[4].doubleValue ?? 0),
+                hasColors: r.count > 5 && (r[5].doubleValue ?? 0) > 0)
         }
     }
 
@@ -177,11 +187,17 @@ final class Workspace: @unchecked Sendable {
         try db.run("UPDATE meta_sheets SET row_count=? WHERE id=?", [.int(Int64(count)), .int(sheetID)])
     }
 
+    func setHasColors(sheetID: Int64, _ on: Bool) throws {
+        try db.run("UPDATE meta_sheets SET has_colors=? WHERE id=?",
+                   [.int(on ? 1 : 0), .int(sheetID)])
+    }
+
     func deleteWorkbook(_ id: Int64) throws {
         let sheets = try loadSheets(workbookID: id)
         for s in sheets {
             try? db.exec("DROP TABLE IF EXISTS \(s.tableName.sqlIdentifier);")
             try? db.exec("DROP TABLE IF EXISTS \((s.tableName + "_fts").sqlIdentifier);")
+            try? db.exec("DROP TABLE IF EXISTS \(s.fillsTableName.sqlIdentifier);")
             try db.run("DELETE FROM meta_columns WHERE sheet_id=?", [.int(s.id)])
             try db.run("DELETE FROM meta_reports WHERE sheet_id=?", [.int(s.id)])
             try db.run("DELETE FROM meta_saved_queries WHERE sheet_id=?", [.int(s.id)])

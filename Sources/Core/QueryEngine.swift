@@ -244,6 +244,28 @@ final class QueryEngine: @unchecked Sendable {
         return try db.query("SELECT \(cols) FROM \(sheet.tableName.sqlIdentifier) WHERE rowid=?", [.int(rowid)]).first
     }
 
+    /// Fetches the stored fill-colour strings (`"col:argb;col:argb"`) for the given
+    /// data rowids, keyed by rowid. Returns an empty map when the sheet has no colours.
+    func fetchFills(rowids: [Int64]) throws -> [Int64: String] {
+        guard sheet.hasColors, !rowids.isEmpty else { return [:] }
+        var out: [Int64: String] = [:]
+        out.reserveCapacity(rowids.count)
+        let table = sheet.fillsTableName.sqlIdentifier
+        var start = 0
+        while start < rowids.count {
+            let chunk = rowids[start..<min(start + 400, rowids.count)]
+            let marks = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+            let rows = try db.query("SELECT rowid,f FROM \(table) WHERE rowid IN (\(marks))",
+                                    chunk.map { DBValue.int($0) })
+            for r in rows {
+                guard case .int(let id) = r[0] else { continue }
+                out[id] = r[1].stringValue
+            }
+            start += chunk.count
+        }
+        return out
+    }
+
     // MARK: Aggregation
 
     func aggregateExpression(_ agg: Aggregation) -> String {

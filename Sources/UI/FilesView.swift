@@ -37,7 +37,7 @@ struct FilesView: View {
             .sheet(isPresented: $showImporter) {
                 DocumentPicker { urls in
                     showImporter = false
-                    library.importFiles(urls, headerRow: settings.headerRowDefault)
+                    library.importFiles(urls, headerMode: settings.headerMode)
                 }
                 .ignoresSafeArea()
             }
@@ -71,18 +71,37 @@ struct FilesView: View {
                 Button("files.sample".loc) { library.createSampleData() }
                     .buttonStyle(.bordered)
             }
-            Toggle("files.headerRow".loc, isOn: $settings.headerRowDefault)
+            headerModePicker
                 .padding(.horizontal, 44)
                 .padding(.top, 6)
         }
         .padding()
     }
 
+    private var headerModePicker: some View {
+        VStack(spacing: 4) {
+            Picker("files.headerMode".loc, selection: Binding(
+                get: { settings.headerMode },
+                set: { settings.headerMode = $0 })) {
+                ForEach(HeaderMode.allCases) { mode in
+                    Text(mode.display).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            Text("files.headerMode.hint".loc)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+    }
+
     private var list: some View {
         List {
             Section {
-                Toggle("files.headerRow".loc, isOn: $settings.headerRowDefault)
+                headerModePicker
                     .font(.subheadline)
+            } footer: {
+                Text("files.headerMode.hint".loc).font(.caption2)
             }
             ForEach(filtered) { wb in
                 Section {

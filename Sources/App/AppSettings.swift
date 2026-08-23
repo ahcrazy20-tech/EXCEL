@@ -35,6 +35,12 @@ enum L10n {
         "files.sheets": ("sheets", "أوراق"),
         "files.delete": ("Delete", "حذف"),
         "files.headerRow": ("First row is a header", "الصف الأول عناوين"),
+        "files.headerMode": ("Header row", "صف العناوين"),
+        "files.headerMode.auto": ("Auto-detect", "كشف تلقائي"),
+        "files.headerMode.always": ("First row", "الصف الأول"),
+        "files.headerMode.none": ("No header", "بدون عناوين"),
+        "files.headerMode.hint": ("Auto-detect finds the header row by itself — even under report titles or blank rows — and never treats it as data.",
+                                  "الكشف التلقائي يحدد صف العناوين بنفسه حتى لو كان تحت عنوان تقرير أو صفوف فارغة، ولا يعامله كبيانات أبدًا."),
         "files.sample": ("Load demo data", "تحميل بيانات تجريبية"),
 
         "sheet.search": ("Search all columns", "ابحث في كل الأعمدة"),
@@ -104,6 +110,9 @@ enum L10n {
         "settings.rowHeight": ("Row height", "ارتفاع الصف"),
         "settings.fontSize": ("Font size", "حجم الخط"),
         "settings.colWidth": ("Column width", "عرض العمود"),
+        "settings.cellColors": ("Cell colors", "ألوان الخلايا"),
+        "settings.importColors": ("Import Excel cell colors", "استيراد ألوان خلايا Excel"),
+        "settings.showColors": ("Show colors inside the grid", "إظهار الألوان داخل الجدول"),
         "settings.storage": ("Storage", "التخزين"),
         "settings.dbSize": ("Database size", "حجم قاعدة البيانات"),
         "settings.clearAll": ("Delete all data", "حذف كل البيانات"),
@@ -158,7 +167,11 @@ final class AppSettings: ObservableObject {
     @AppStorage("fontSize") var fontSize: Double = 13 { didSet { objectWillChange.send() } }
     @AppStorage("columnWidth") var columnWidth: Double = 130 { didSet { objectWillChange.send() } }
     @AppStorage("freezeFirstColumn") var freezeFirstColumn: Bool = true { didSet { objectWillChange.send() } }
-    @AppStorage("headerRowDefault") var headerRowDefault: Bool = true { didSet { objectWillChange.send() } }
+    @AppStorage("headerModeRaw") var headerModeRaw: String = HeaderMode.auto.rawValue {
+        didSet { objectWillChange.send() }
+    }
+    @AppStorage("importCellColors") var importCellColors: Bool = true { didSet { objectWillChange.send() } }
+    @AppStorage("showCellColors") var showCellColors: Bool = true { didSet { objectWillChange.send() } }
     @AppStorage("haptics") var haptics: Bool = true { didSet { objectWillChange.send() } }
     @AppStorage("aiProvider") var aiProviderRaw: String = AIProvider.groq.rawValue { didSet { objectWillChange.send() } }
     @AppStorage("aiModelsJSON") var aiModelsJSON: String = "{}" { didSet { objectWillChange.send() } }
@@ -172,6 +185,11 @@ final class AppSettings: ObservableObject {
     var language: AppLanguage {
         get { AppLanguage(rawValue: languageRaw) ?? .ar }
         set { languageRaw = newValue.rawValue; L10n.language = newValue }
+    }
+
+    var headerMode: HeaderMode {
+        get { HeaderMode(rawValue: headerModeRaw) ?? .auto }
+        set { headerModeRaw = newValue.rawValue }
     }
 
     var colorScheme: ColorScheme? {

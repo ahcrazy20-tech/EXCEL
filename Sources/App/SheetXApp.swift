@@ -45,7 +45,7 @@ struct RootView: View {
             // Files opened via "Open in SheetX" / the Files app land here.
             guard url.isFileURL else { return }
             tab = 0
-            library.importFiles([url], headerRow: settings.headerRowDefault)
+            library.importFiles([url], headerMode: settings.headerMode)
         }
     }
 }

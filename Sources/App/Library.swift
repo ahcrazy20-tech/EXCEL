@@ -58,11 +58,12 @@ final class Library: ObservableObject {
         return types
     }()
 
-    func importFiles(_ urls: [URL], headerRow: Bool) {
+    func importFiles(_ urls: [URL], headerMode: HeaderMode, importColors: Bool? = nil) {
         guard !importing else { return }
         importing = true
         cancelBox.reset()
         progress = ImportProgress(stage: "starting", fraction: 0, rowsDone: 0, sheetName: "")
+        let colors = importColors ?? AppSettings.shared.importCellColors
 
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
@@ -70,7 +71,7 @@ final class Library: ObservableObject {
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                 do {
-                    try await self.importOne(url: url, headerRow: headerRow)
+                    try await self.importOne(url: url, headerMode: headerMode, importColors: colors)
                 } catch {
                     let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                     await MainActor.run { self.errorMessage = "\(url.lastPathComponent): \(message)" }
@@ -84,7 +85,7 @@ final class Library: ObservableObject {
         }
     }
 
-    private nonisolated func importOne(url: URL, headerRow: Bool) async throws {
+    private nonisolated func importOne(url: URL, headerMode: HeaderMode, importColors: Bool) async throws {
         let ext = url.pathExtension.lowercased()
         let ws = Workspace.shared
         let box = self.cancelBox
@@ -100,11 +101,11 @@ final class Library: ObservableObject {
         switch ext {
         case "xlsx", "xlsm", "xltx", "xltm":
             _ = try XLSXImporter(workspace: ws, cancelFlag: cancel)
-                .importWorkbook(url: localURL, headerRow: headerRow, progress: report)
+                .importWorkbook(url: localURL, headerMode: headerMode, importColors: importColors, progress: report)
         case "csv", "tsv", "txt", "tab":
             let delim: Character? = (ext == "tsv" || ext == "tab") ? "\t" : nil
             _ = try CSVImporter(workspace: ws, cancelFlag: cancel)
-                .importFile(url: localURL, delimiter: delim, headerRow: headerRow, progress: report)
+                .importFile(url: localURL, delimiter: delim, headerMode: headerMode, progress: report)
         case "json":
             _ = try JSONImporter(workspace: ws).importFile(url: localURL, progress: report)
         case "xls":
@@ -116,10 +117,10 @@ final class Library: ObservableObject {
             try? handle.close()
             if magic == Data([0x50, 0x4B]) {
                 _ = try XLSXImporter(workspace: ws, cancelFlag: cancel)
-                    .importWorkbook(url: localURL, headerRow: headerRow, progress: report)
+                    .importWorkbook(url: localURL, headerMode: headerMode, importColors: importColors, progress: report)
             } else {
                 _ = try CSVImporter(workspace: ws, cancelFlag: cancel)
-                    .importFile(url: localURL, delimiter: nil, headerRow: headerRow, progress: report)
+                    .importFile(url: localURL, delimiter: nil, headerMode: headerMode, progress: report)
             }
         }
     }
@@ -196,7 +197,7 @@ final class Library: ObservableObject {
             try? Data(csv.utf8).write(to: url)
             do {
                 _ = try CSVImporter(workspace: Workspace.shared)
-                    .importFile(url: url, delimiter: ",", headerRow: true) { p in
+                    .importFile(url: url, delimiter: ",", headerMode: .always) { p in
                         Task { @MainActor in self.progress = p }
                     }
             } catch {

@@ -10,6 +10,8 @@ final class SheetViewModel: ObservableObject {
     @Published var query = QuerySpec()
     @Published var totalRows = 0
     @Published var loadedPages: [Int: [[DBValue]]] = [:]   // page -> rows (first element is rowid)
+    /// page -> row offset within page -> (column index -> fill ARGB)
+    @Published var pageFills: [Int: [Int: [Int: UInt32]]] = [:]
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var hiddenColumns: Set<Int> = []
@@ -32,21 +34,56 @@ final class SheetViewModel: ObservableObject {
         sheet.columns.filter { !hiddenColumns.contains($0.index) }
     }
 
+    var colorsEnabled: Bool {
+        sheet.hasColors && AppSettings.shared.showCellColors
+    }
+
+    /// Fill colours for a row, keyed by column index (nil when the page/row has none).
+    func fills(page: Int, offset: Int) -> [Int: UInt32]? {
+        pageFills[page]?[offset]
+    }
+
+    /// Fetches one page of rows plus its fill colours off the main thread.
+    private nonisolated static func loadPage(engine: QueryEngine, spec: QuerySpec,
+                                            offset: Int, limit: Int, colors: Bool)
+    -> ([[DBValue]], [Int: [Int: UInt32]]) {
+        guard let rows = try? engine.fetchRows(spec, offset: offset, limit: limit) else {
+            return ([], [:])
+        }
+        guard colors, !rows.isEmpty else { return (rows, [:]) }
+        let raw = (try? engine.fetchFills(rowids: rows.map { row -> Int64? in
+            guard case .int(let id) = row.first else { return nil }
+            return id
+        }.compactMap { $0 })) ?? [:]
+        guard !raw.isEmpty else { return (rows, [:]) }
+        var decoded: [Int: [Int: UInt32]] = [:]
+        for (i, row) in rows.enumerated() {
+            guard case .int(let id) = row.first, let stored = raw[id] else { continue }
+            let fills = FillCodec.decode(stored)
+            if !fills.isEmpty { decoded[i] = fills }
+        }
+        return (rows, decoded)
+    }
+
     func refresh() {
         generation += 1
         let gen = generation
         loadedPages.removeAll()
+        pageFills.removeAll()
         loadingPages.removeAll()
         isLoading = true
         let spec = query
         let engine = self.engine
+        let colors = colorsEnabled
         Task.detached(priority: .userInitiated) {
             let count = (try? engine.countRows(spec)) ?? 0
-            let first = (try? engine.fetchRows(spec, offset: 0, limit: 200)) ?? []
+            let (rows, pageFill) = SheetViewModel.loadPage(engine: engine, spec: spec,
+                                                           offset: 0, limit: 200, colors: colors)
             await MainActor.run {
                 guard gen == self.generation else { return }
                 self.totalRows = count
-                self.loadedPages[0] = first
+                self.loadedPages[0] = rows
+                self.pageFills[0] = pageFill
                 self.isLoading = false
             }
         }
@@ -68,19 +105,23 @@ final class SheetViewModel: ObservableObject {
         let gen = generation
         let spec = query
         let engine = self.engine
+        let colors = colorsEnabled
         let offset = page * pageSize
         let limit = pageSize
         Task.detached(priority: .userInitiated) {
-            let rows = (try? engine.fetchRows(spec, offset: offset, limit: limit)) ?? []
+            let (rows, fills) = SheetViewModel.loadPage(engine: engine, spec: spec,
+                                                        offset: offset, limit: limit, colors: colors)
             await MainActor.run {
                 guard gen == self.generation else { return }
                 self.loadedPages[page] = rows
+                self.pageFills[page] = fills
                 self.loadingPages.remove(page)
                 // Keep memory bounded: drop pages far from the one just loaded.
                 if self.loadedPages.count > 24 {
                     let keep = Set((page - 4)...(page + 4))
                     for k in self.loadedPages.keys where !keep.contains(k) {
                         self.loadedPages.removeValue(forKey: k)
+                        self.pageFills.removeValue(forKey: k)
                     }
                 }
             }
