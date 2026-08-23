@@ -13,6 +13,7 @@ struct SheetScreen: View {
     @State private var showCharts = false
     @State private var showStats = false
     @State private var showExport = false
+    @State private var showPivot = false
     @State private var showGoTo = false
     @State private var gotoText = ""
     @State private var scrollTarget: Int?
@@ -56,6 +57,9 @@ struct SheetScreen: View {
         }
         .sheet(isPresented: $showExport) {
             ExportView(vm: vm)
+        }
+        .sheet(isPresented: $showPivot) {
+            PivotView(vm: vm)
         }
         .sheet(item: $selectedColumn) { col in
             ColumnActionsView(vm: vm, column: col)
@@ -144,6 +148,7 @@ struct SheetScreen: View {
                 Image(systemName: "sparkles")
             }
             Menu {
+                Button { showPivot = true } label: { Label("sheet.pivot".loc, systemImage: "square.split.2x2") }
                 Button { showFilters = true } label: { Label("sheet.filters".loc, systemImage: "line.3.horizontal.decrease.circle") }
                 Button { showColumns = true } label: { Label("sheet.columns".loc, systemImage: "list.bullet.indent") }
                 Button { showStats = true } label: { Label("sheet.stats".loc, systemImage: "chart.bar.doc.horizontal") }

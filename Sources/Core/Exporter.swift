@@ -218,6 +218,72 @@ enum Exporter {
         return url
     }
 
+    /// Builds a real-grid HTML table that carries the imported Excel cell colours.
+    /// Streams page by page so hundreds of thousands of rows stay memory-flat.
+    static func htmlGrid(engine: QueryEngine, query: QuerySpec, limit: Int, rtl: Bool,
+                         progress: ((Double) -> Void)? = nil) throws -> String {
+        let columns = engine.sheet.columns
+        var parts: [String] = []
+        parts.append("""
+        <!DOCTYPE html><html dir="\(rtl ? "rtl" : "ltr")"><head><meta charset="utf-8">
+        <title>\(xmlEscape(engine.sheet.name))</title>
+        <style>
+        body{font-family:-apple-system,'Segoe UI',Tahoma,sans-serif;margin:16px;color:#1c1c1e;}
+        h1{font-size:18px;margin:0 0 10px;}
+        table{border-collapse:collapse;font-size:12px;}
+        th,td{border:1px solid #d8d8dc;padding:4px 8px;white-space:nowrap;}
+        th{background:#eef1f6;position:sticky;top:0;font-weight:600;}
+        td.num{text-align:left;font-variant-numeric:tabular-nums;}
+        caption{caption-side:bottom;font-size:11px;color:#888;padding-top:8px;}
+        </style></head><body>
+        <h1>\(xmlEscape(engine.sheet.name))</h1>
+        <table><thead><tr><th>#</th>
+        """)
+        for c in columns {
+            parts.append("<th>\(xmlEscape(c.name))</th>")
+        }
+        parts.append("</tr></thead><tbody>")
+
+        let pageSize = 2000
+        var offset = 0
+        var written = 0
+        while written < limit {
+            let rows = try engine.fetchRows(query, offset: offset, limit: min(pageSize, limit - written))
+            if rows.isEmpty { break }
+            var fillsByRowid: [Int64: String] = [:]
+            if engine.sheet.hasColors {
+                let ids = rows.compactMap { row -> Int64? in
+                    guard case .int(let id) = row.first else { return nil }
+                    return id
+                }
+                fillsByRowid = (try? engine.fetchFills(rowids: ids)) ?? [:]
+            }
+            for row in rows {
+                var rowid: Int64 = 0
+                if case .int(let id) = row.first { rowid = id }
+                let fills = fillsByRowid[rowid].map { FillCodec.decode($0) } ?? [:]
+                parts.append("<tr><td style=\"color:#888\">\(written + 1)</td>")
+                for (i, _) in columns.enumerated() {
+                    let value = i + 1 < row.count ? row[i + 1] : DBValue.null
+                    var style = ""
+                    if let argb = fills[i] {
+                        style = " style=\"background:#\(String(format: "%06X", argb & 0xFFFFFF))\""
+                    }
+                    let text = value.stringValue
+                    parts.append("<td\(style)>\(text.isEmpty ? "&nbsp;" : xmlEscape(text))</td>")
+                }
+                parts.append("</tr>")
+                written += 1
+            }
+            offset += rows.count
+            progress?(Double(written) / Double(max(1, limit)))
+        }
+        parts.append("</tbody></table>")
+        parts.append("<caption>\(written) rows\(engine.sheet.hasColors ? " • cell colours included" : "")</caption>")
+        parts.append("</body></html>")
+        return parts.joined()
+    }
+
     @MainActor
     static func pdf(html: String, name: String) throws -> URL {
         let formatter = UIMarkupTextPrintFormatter(markupText: html)

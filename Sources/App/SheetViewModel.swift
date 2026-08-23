@@ -14,8 +14,12 @@ final class SheetViewModel: ObservableObject {
     @Published var pageFills: [Int: [Int: [Int: UInt32]]] = [:]
     @Published var isLoading = false
     @Published var errorMessage: String?
-    @Published var hiddenColumns: Set<Int> = []
-    @Published var columnWidths: [Int: CGFloat] = [:]
+    @Published var hiddenColumns: Set<Int> = [] {
+        didSet { persistLayout() }
+    }
+    @Published var columnWidths: [Int: CGFloat] = [:] {
+        didSet { persistLayout() }
+    }
     @Published var selectedRow: [DBValue]?
     @Published var lastAnalysis: ResultTable?
 
@@ -27,7 +31,34 @@ final class SheetViewModel: ObservableObject {
         self.sheet = sheet
         self.engine = QueryEngine(db: Workspace.shared.db, sheet: sheet)
         self.totalRows = sheet.rowCount
+        loadLayout()
         refresh()
+    }
+
+    // MARK: Per-sheet layout persistence (column widths + hidden columns)
+
+    private static let layoutKey = "sheetLayouts"
+
+    private func loadLayout() {
+        guard let all = UserDefaults.standard.dictionary(forKey: Self.layoutKey),
+              let entry = all["\(sheet.id)"] as? [String: Any] else { return }
+        if let widths = entry["widths"] as? [String: Double] {
+            for (k, v) in widths {
+                if let idx = Int(k) { columnWidths[idx] = CGFloat(v) }
+            }
+        }
+        if let hidden = entry["hidden"] as? [Int] {
+            hiddenColumns = Set(hidden)
+        }
+    }
+
+    private func persistLayout() {
+        let widths = columnWidths.reduce(into: [String: Double]()) { dict, pair in
+            dict["\(pair.key)"] = Double(pair.value)
+        }
+        var all = UserDefaults.standard.dictionary(forKey: Self.layoutKey) ?? [:]
+        all["\(sheet.id)"] = ["widths": widths, "hidden": Array(hiddenColumns)] as [String: Any]
+        UserDefaults.standard.set(all, forKey: Self.layoutKey)
     }
 
     var visibleColumns: [ColumnInfo] {

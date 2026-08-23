@@ -597,6 +597,8 @@ final class XLSXImporter {
                                                    headers: header, dateHints: parserDelegate.dateColumns)
         try workspace.saveColumns(sheetID: sheetID, columns: columns)
         try workspace.setRowCount(sheetID: sheetID, count: total)
+        // Keep the query planner's statistics fresh after big imports.
+        try? workspace.db.exec("PRAGMA optimize;")
         progress(ImportProgress(stage: "finished \(name)", fraction: sheetProgressBase + sheetProgressSpan,
                                 rowsDone: total, sheetName: name))
     }

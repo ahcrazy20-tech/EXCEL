@@ -229,8 +229,15 @@ final class QueryEngine: @unchecked Sendable {
     }
 
     func fetchRows(_ spec: QuerySpec, offset: Int, limit: Int) throws -> [[DBValue]] {
-        let (w, p) = whereClause(spec)
         let cols = sheet.columns.map { "c\($0.index)" }.joined(separator: ",")
+        // Fast path: with no filters/sorts the table's rowids are contiguous (1…N),
+        // so a page is a direct range seek instead of scanning past OFFSET rows.
+        // Jumping to row 1,000,000 becomes instant.
+        if !spec.isActive {
+            let sql = "SELECT rowid,\(cols) FROM \(sheet.tableName.sqlIdentifier) WHERE rowid >= ? AND rowid < ?"
+            return try db.query(sql, [.int(Int64(offset + 1)), .int(Int64(offset + limit + 1))])
+        }
+        let (w, p) = whereClause(spec)
         var sql = "SELECT rowid,\(cols) FROM \(sheet.tableName.sqlIdentifier)"
         if !w.isEmpty { sql += " WHERE \(w)" }
         let order = orderClause(spec)
@@ -447,5 +454,109 @@ final class QueryEngine: @unchecked Sendable {
         guard let col = column(columnIndex) else { return }
         let name = "idx_\(sheet.tableName)_\(col)"
         try? db.exec("CREATE INDEX IF NOT EXISTS \(name.sqlIdentifier) ON \(sheet.tableName.sqlIdentifier)(\(col));")
+    }
+
+    // MARK: - Pivot tables
+
+    struct PivotSpec {
+        /// Row dimensions (1…2 column indexes), in order.
+        var rowColumns: [Int] = []
+        /// Optional cross-tab column dimension.
+        var columnDim: Int?
+        /// Metric column (nil = plain COUNT).
+        var valueColumn: Int?
+        var function: AggFunction = .count
+        var query = QuerySpec()
+        var rowLimit: Int = 100
+        var columnLimit: Int = 25
+    }
+
+    struct PivotResult {
+        var rowDimNames: [String] = []
+        var columnDimName: String?
+        var metricName: String = ""
+        /// Raw (possibly empty) labels per row, one array per row dimension.
+        var rowKeys: [[String]] = []
+        var columnKeys: [String] = []
+        /// cells[row][col]; nil = no data for that combination.
+        var cells: [[Double?]] = []
+        var rowTotals: [Double] = []
+        var columnTotals: [Double] = []
+        var grandTotal: Double = 0
+        var truncatedRows = false
+        var truncatedColumns = false
+        var groupCapReached = false
+    }
+
+    /// Cross-tabulation over the whole (optionally filtered) sheet in a single GROUP BY pass.
+    func runPivot(_ spec: PivotSpec) throws -> PivotResult {
+        let rowDims = spec.rowColumns.compactMap { column($0) != nil ? $0 : nil }
+        guard !rowDims.isEmpty else {
+            throw DBError.prepare("pivot needs at least one row dimension")
+        }
+        let colDim = spec.columnDim.flatMap { column($0) }
+        let function: AggFunction = {
+            if spec.function != .count, let v = spec.valueColumn,
+               v >= 0, v < sheet.columns.count, sheet.columns[v].kind != .number {
+                return .count   // numeric metrics only make sense on numeric columns
+            }
+            return spec.function
+        }()
+        let metric = aggregateExpression(Aggregation(function: function, columnIndex: spec.valueColumn))
+        let metricName = aggregationTitle(Aggregation(function: function, columnIndex: spec.valueColumn))
+
+        var out = PivotResult()
+        out.rowDimNames = rowDims.map { columnName($0) }
+        out.columnDimName = colDim != nil ? columnName(spec.columnDim!) : nil
+        out.metricName = metricName
+
+        let (w, p) = whereClause(spec.query)
+        let whereSQL = w.isEmpty ? "" : " WHERE \(w)"
+        var selects: [String] = rowDims.map { column($0)! }
+        if let cd = colDim { selects.append(cd) }
+        let groupBy = selects.joined(separator: ",")
+        let groupCap = 200_000
+        let sql = "SELECT \(groupBy), \(metric) FROM \(sheet.tableName.sqlIdentifier)\(whereSQL) GROUP BY \(groupBy) LIMIT \(groupCap + 1)"
+        let groups = try db.query(sql, p)
+        if groups.count > groupCap {
+            out.groupCapReached = true
+            groups.removeLast()
+        }
+
+        let rowDimCount = rowDims.count
+        let colIdx = rowDimCount + (colDim != nil ? 1 : 0)
+        let valIdx = colIdx
+
+        var rowTotals: [String: Double] = [:]
+        var colTotals: [String: Double] = [:]
+        var cells: [String: [String: Double]] = [:]
+        for g in groups {
+            let rowKey = g.prefix(rowDimCount).map { $0.stringValue }.joined(separator: "\u{1F}")
+            let colKey = colDim != nil ? g[valIdx - 1].stringValue : ""
+            let value = g[valIdx].doubleValue ?? 0
+            rowTotals[rowKey, default: 0] += value
+            colTotals[colKey, default: 0] += value
+            cells[rowKey, default: [:]][colKey, default: 0] += value
+        }
+
+        // Order by total (desc), cap rows/columns, then materialise the matrix.
+        let topRows = rowTotals.sorted { $0.value > $1.value }.prefix(spec.rowLimit)
+        let topCols = colTotals.sorted { $0.value > $1.value }.prefix(spec.columnLimit)
+        out.truncatedRows = topRows.count < rowTotals.count
+        out.truncatedColumns = topCols.count < colTotals.count
+
+        let rowSep = "\u{1F}"
+        out.rowKeys = topRows.map { $0.key.components(separatedBy: rowSep) }
+        out.rowTotals = topRows.map { $0.value }
+        out.columnKeys = topCols.map { colDim != nil ? $0.key : metricName }
+        out.columnTotals = topCols.map { $0.value }
+        out.grandTotal = topRows.reduce(0) { $0 + $1.value }
+
+        let colKeyLookup: [String] = topCols.map { $0.key }
+        out.cells = topRows.map { rowEntry in
+            let rowCells = cells[rowEntry.key] ?? [:]
+            return colKeyLookup.map { rowCells[$0] }
+        }
+        return out
     }
 }

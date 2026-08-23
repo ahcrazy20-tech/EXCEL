@@ -136,6 +136,8 @@ final class CSVImporter {
         let columns = try SchemaInspector.classify(db: workspace.db, tableName: tableName, headers: header, dateHints: [])
         try workspace.saveColumns(sheetID: sheetID, columns: columns)
         try workspace.setRowCount(sheetID: sheetID, count: total)
+        // Keep the query planner's statistics fresh after big imports.
+        try? workspace.db.exec("PRAGMA optimize;")
         progress(ImportProgress(stage: "done", fraction: 1, rowsDone: total, sheetName: sheetName))
         return wbID
     }
