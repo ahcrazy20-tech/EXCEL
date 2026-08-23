@@ -31,7 +31,33 @@ struct SettingsView: View {
                     sliderRow("settings.rowHeight".loc, value: $settings.rowHeight, range: 26...58, step: 2)
                     sliderRow("settings.fontSize".loc, value: $settings.fontSize, range: 10...20, step: 1)
                     sliderRow("settings.colWidth".loc, value: $settings.columnWidth, range: 80...300, step: 10)
-                    Toggle("files.headerRow".loc, isOn: $settings.headerRowDefault)
+                }
+
+                Section {
+                    Picker("files.headerMode".loc, selection: Binding(
+                        get: { settings.headerMode },
+                        set: { settings.headerMode = $0 })) {
+                        ForEach(HeaderMode.allCases) { mode in
+                            Text(mode.display).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("files.headerMode".loc)
+                } footer: {
+                    Text("files.headerMode.hint".loc).font(.caption2)
+                }
+
+                Section {
+                    Toggle("settings.importColors".loc, isOn: $settings.importColors)
+                    Toggle("settings.showColors".loc, isOn: $settings.showColors)
+                } header: {
+                    Text("settings.cellColors".loc)
+                } footer: {
+                    Text(settings.language == .ar
+                         ? "الألوان تُستورد من ملفات Excel وتُعرض داخل الجدول. يعاد الاستيراد لتطبيق تغيير الاستيراد."
+                         : "Colors are imported from Excel files and shown inside the grid. Re-import to apply import changes.")
+                        .font(.caption2)
                 }
 
                 Section {

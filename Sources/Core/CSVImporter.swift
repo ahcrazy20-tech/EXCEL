@@ -28,7 +28,7 @@ final class CSVImporter {
         return best
     }
 
-    func importFile(url: URL, delimiter: Character?, headerRow: Bool,
+    func importFile(url: URL, delimiter: Character?, headerMode: HeaderMode,
                     progress: @escaping (ImportProgress) -> Void) throws -> Int64 {
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
@@ -56,7 +56,27 @@ final class CSVImporter {
         var writer: TableWriter?
         var rows = 0
         var bytesRead: Int64 = 0
-        var isFirst = true
+
+        // Header detection buffers the first rows before deciding which one is the header.
+        var buffer: [[DBValue]] = []
+        var decided = false
+
+        func flushDecision() {
+            guard writer == nil else { return }
+            decided = true
+            let decision = HeaderDetector.decide(mode: headerMode, buffer: buffer)
+            header = decision.header
+            let width = max(header.count, buffer.map { $0.count }.max() ?? 0)
+            writer = try? TableWriter(db: self.workspace.db, tableName: tableName, columnCount: max(1, width))
+            let firstDataIndex = (decision.headerIndex ?? -1) + 1
+            if firstDataIndex < buffer.count, let w = writer {
+                for row in buffer[firstDataIndex...] {
+                    try? w.write(row)
+                    rows += 1
+                }
+            }
+            buffer.removeAll(keepingCapacity: true)
+        }
 
         let parser = DelimitedParser(delimiter: delim)
         var thrown: Error?
@@ -66,18 +86,10 @@ final class CSVImporter {
             guard let chunk = try handle.read(upToCount: 4 * 1024 * 1024), !chunk.isEmpty else { break }
             bytesRead += Int64(chunk.count)
             parser.feed(chunk) { fields in
-                if isFirst {
-                    isFirst = false
-                    if headerRow {
-                        header = fields.enumerated().map { i, f in
-                            let t = f.trimmingCharacters(in: .whitespacesAndNewlines)
-                            return t.isEmpty ? "Column \(CellRef.name(forIndex: i))" : t
-                        }
-                        writer = try? TableWriter(db: self.workspace.db, tableName: tableName, columnCount: max(1, header.count))
-                        return
-                    }
-                    header = (0..<max(1, fields.count)).map { "Column \(CellRef.name(forIndex: $0))" }
-                    writer = try? TableWriter(db: self.workspace.db, tableName: tableName, columnCount: max(1, fields.count))
+                if !decided {
+                    buffer.append(fields.map(ValueCoercion.fromString))
+                    if buffer.count >= HeaderDetector.sampleLimit { flushDecision() }
+                    return
                 }
                 guard let writer else { return }
                 do {
@@ -93,10 +105,17 @@ final class CSVImporter {
         }
 
         parser.finish { fields in
-            guard let writer, !(fields.count == 1 && fields[0].isEmpty) else { return }
+            guard !(fields.count == 1 && fields[0].isEmpty) else { return }
+            if !decided {
+                buffer.append(fields.map(ValueCoercion.fromString))
+                return
+            }
+            guard let writer else { return }
             try? writer.write(fields.map(ValueCoercion.fromString))
             rows += 1
         }
+
+        if !decided { flushDecision() }
 
         if let thrown {
             _ = try? writer?.finish()
@@ -117,6 +136,8 @@ final class CSVImporter {
         let columns = try SchemaInspector.classify(db: workspace.db, tableName: tableName, headers: header, dateHints: [])
         try workspace.saveColumns(sheetID: sheetID, columns: columns)
         try workspace.setRowCount(sheetID: sheetID, count: total)
+        // Keep the query planner's statistics fresh after big imports.
+        try? workspace.db.exec("PRAGMA optimize;")
         progress(ImportProgress(stage: "done", fraction: 1, rowsDone: total, sheetName: sheetName))
         return wbID
     }

@@ -35,6 +35,12 @@ enum L10n {
         "files.sheets": ("sheets", "أوراق"),
         "files.delete": ("Delete", "حذف"),
         "files.headerRow": ("First row is a header", "الصف الأول عناوين"),
+        "files.headerMode": ("Header row", "صف العناوين"),
+        "files.headerMode.auto": ("Auto-detect", "كشف تلقائي"),
+        "files.headerMode.always": ("First row", "الصف الأول"),
+        "files.headerMode.none": ("No header", "بدون عناوين"),
+        "files.headerMode.hint": ("Auto-detect finds the header row by itself — even under report titles or blank rows — and never treats it as data.",
+                                  "الكشف التلقائي يحدد صف العناوين بنفسه حتى لو كان تحت عنوان تقرير أو صفوف فارغة، ولا يعامله كبيانات أبدًا."),
         "files.sample": ("Load demo data", "تحميل بيانات تجريبية"),
 
         "sheet.search": ("Search all columns", "ابحث في كل الأعمدة"),
@@ -48,6 +54,7 @@ enum L10n {
         "sheet.chart": ("Charts", "الرسوم"),
         "sheet.export": ("Export", "تصدير"),
         "sheet.freeze": ("Freeze first column", "تثبيت العمود الأول"),
+        "sheet.pivot": ("Pivot table", "جدول محوري"),
         "sheet.goto": ("Go to row", "اذهب إلى صف"),
         "sheet.clear": ("Clear", "مسح"),
         "sheet.apply": ("Apply", "تطبيق"),
@@ -77,6 +84,20 @@ enum L10n {
         "ask.saveResult": ("Save as report", "حفظ كتقرير"),
         "ask.applyToSheet": ("Apply to sheet", "طبّق على الجدول"),
 
+        "pivot.rows": ("Rows", "الصفوف"),
+        "pivot.rows2": ("Level 2", "مستوى 2"),
+        "pivot.columns": ("Columns", "الأعمدة"),
+        "pivot.metric": ("Value", "القيمة"),
+        "pivot.none": ("None", "بدون"),
+        "pivot.run": ("Build", "أنشئ"),
+        "pivot.total": ("Total", "الإجمالي"),
+        "pivot.limit": ("Top", "الأعلى"),
+        "pivot.csv": ("CSV", "CSV"),
+        "pivot.cap": ("Very high cardinality — showing an approximation", "تعدد قيم مرتفع جدًا — العرض تقريبي"),
+        "pivot.hint": ("Pick one or two row dimensions, an optional column dimension and a value, then press Build. Tap any cell to filter the sheet by it.",
+                       "اختر بُعد صف أو اثنين، وبُعد أعمدة اختياريًا، وقيمة، ثم اضغط أنشئ. اضغط على أي خلية لتفلتر الشيت بها."),
+        "export.coloredGrid": ("Colored table instead of report", "جدول ملون بدل التقرير"),
+
         "report.title": ("Reports", "التقارير"),
         "report.empty": ("Reports you generate will appear here.", "التقارير التي تنشئها ستظهر هنا."),
         "report.generate": ("Generate full report", "إنشاء تقرير كامل"),
@@ -104,6 +125,9 @@ enum L10n {
         "settings.rowHeight": ("Row height", "ارتفاع الصف"),
         "settings.fontSize": ("Font size", "حجم الخط"),
         "settings.colWidth": ("Column width", "عرض العمود"),
+        "settings.cellColors": ("Cell colors", "ألوان الخلايا"),
+        "settings.importColors": ("Import Excel cell colors", "استيراد ألوان خلايا Excel"),
+        "settings.showColors": ("Show colors inside the grid", "إظهار الألوان داخل الجدول"),
         "settings.storage": ("Storage", "التخزين"),
         "settings.dbSize": ("Database size", "حجم قاعدة البيانات"),
         "settings.clearAll": ("Delete all data", "حذف كل البيانات"),
@@ -158,7 +182,11 @@ final class AppSettings: ObservableObject {
     @AppStorage("fontSize") var fontSize: Double = 13 { didSet { objectWillChange.send() } }
     @AppStorage("columnWidth") var columnWidth: Double = 130 { didSet { objectWillChange.send() } }
     @AppStorage("freezeFirstColumn") var freezeFirstColumn: Bool = true { didSet { objectWillChange.send() } }
-    @AppStorage("headerRowDefault") var headerRowDefault: Bool = true { didSet { objectWillChange.send() } }
+    @AppStorage("headerModeRaw") var headerModeRaw: String = HeaderMode.auto.rawValue {
+        didSet { objectWillChange.send() }
+    }
+    @AppStorage("importCellColors") var importCellColors: Bool = true { didSet { objectWillChange.send() } }
+    @AppStorage("showCellColors") var showCellColors: Bool = true { didSet { objectWillChange.send() } }
     @AppStorage("haptics") var haptics: Bool = true { didSet { objectWillChange.send() } }
     @AppStorage("aiProvider") var aiProviderRaw: String = AIProvider.groq.rawValue { didSet { objectWillChange.send() } }
     @AppStorage("aiModelsJSON") var aiModelsJSON: String = "{}" { didSet { objectWillChange.send() } }
@@ -172,6 +200,11 @@ final class AppSettings: ObservableObject {
     var language: AppLanguage {
         get { AppLanguage(rawValue: languageRaw) ?? .ar }
         set { languageRaw = newValue.rawValue; L10n.language = newValue }
+    }
+
+    var headerMode: HeaderMode {
+        get { HeaderMode(rawValue: headerModeRaw) ?? .auto }
+        set { headerModeRaw = newValue.rawValue }
     }
 
     var colorScheme: ColorScheme? {

@@ -246,6 +246,7 @@ struct ExportView: View {
     @State private var format: ExportFormat = .csv
     @State private var onlyFiltered = true
     @State private var maxRows = 100_000
+    @State private var coloredGrid = true
     @State private var working = false
     @State private var shareItem: ShareItem?
     @State private var progress: Double = 0
@@ -260,6 +261,9 @@ struct ExportView: View {
                     Toggle("Apply current filters", isOn: $onlyFiltered)
                     if format != .csv {
                         Stepper("Max rows: \(ReportBuilder.formatInt(maxRows))", value: $maxRows, in: 1000...500_000, step: 1000)
+                    }
+                    if (format == .html || format == .pdf) && vm.engine.sheet.hasColors {
+                        Toggle("export.coloredGrid".loc, isOn: $coloredGrid)
                     }
                 }
                 Section {
@@ -314,16 +318,28 @@ struct ExportView: View {
                         ? try Exporter.xlsx(table: table, name: name)
                         : try Exporter.json(table: table, name: name)
                 case .markdown, .html, .pdf:
-                    let builder = ReportBuilder(engine: engine, arabic: arabic)
-                    let md = try builder.fullReport(query: query)
-                    if fmt == .markdown {
-                        url = try Exporter.text(md, name: name, ext: "md")
-                    } else {
-                        let html = MarkdownRenderer.html(from: md, rtl: arabic)
+                    if (fmt == .html || fmt == .pdf), coloredGrid, engine.sheet.hasColors {
+                        // Coloured grid export: the actual sheet with its cell colours.
+                        let html = try Exporter.htmlGrid(engine: engine, query: query, limit: cap, rtl: arabic) { p in
+                            Task { @MainActor in progress = p }
+                        }
                         if fmt == .html {
                             url = try Exporter.text(html, name: name, ext: "html")
                         } else {
                             url = try await MainActor.run { try Exporter.pdf(html: html, name: name) }
+                        }
+                    } else {
+                        let builder = ReportBuilder(engine: engine, arabic: arabic)
+                        let md = try builder.fullReport(query: query)
+                        if fmt == .markdown {
+                            url = try Exporter.text(md, name: name, ext: "md")
+                        } else {
+                            let html = MarkdownRenderer.html(from: md, rtl: arabic)
+                            if fmt == .html {
+                                url = try Exporter.text(html, name: name, ext: "html")
+                            } else {
+                                url = try await MainActor.run { try Exporter.pdf(html: html, name: name) }
+                            }
                         }
                     }
                 }

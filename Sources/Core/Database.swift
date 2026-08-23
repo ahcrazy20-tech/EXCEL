@@ -59,6 +59,12 @@ final class Database: @unchecked Sendable {
     private let queue = DispatchQueue(label: "sheetx.db")
     let path: String
 
+    // Prepared-statement cache: page fetches / counts / filters reuse the same SQL
+    // strings constantly, so preparing once and resetting is a significant win.
+    private var stmtCache: [String: OpaquePointer] = [:]
+    private var stmtKeys: [String] = []
+    private let stmtCacheLimit = 64
+
     init(path: String) throws {
         self.path = path
         var h: OpaquePointer?
@@ -73,9 +79,16 @@ final class Database: @unchecked Sendable {
         try exec("PRAGMA temp_store=MEMORY;")
         try exec("PRAGMA cache_size=-40000;")   // ~40MB page cache
         try exec("PRAGMA mmap_size=268435456;") // 256MB mmap
+        try exec("PRAGMA wal_autocheckpoint=1000;")
+        try exec("PRAGMA busy_timeout=5000;")
     }
 
-    deinit { if let handle { sqlite3_close_v2(handle) } }
+    deinit {
+        // Finalize cached statements before closing so nothing is orphaned.
+        for stmt in stmtCache.values { sqlite3_finalize(stmt) }
+        stmtCache.removeAll()
+        if let handle { sqlite3_close_v2(handle) }
+    }
 
     private var errorMessage: String {
         guard let handle else { return "no handle" }
@@ -93,8 +106,7 @@ final class Database: @unchecked Sendable {
     @discardableResult
     func run(_ sql: String, _ params: [DBValue] = []) throws -> Int {
         try queue.sync {
-            let stmt = try prepareUnsafe(sql, params)
-            defer { sqlite3_finalize(stmt) }
+            let stmt = try cachedStmt(sql, params)
             let rc = sqlite3_step(stmt)
             guard rc == SQLITE_DONE || rc == SQLITE_ROW else {
                 throw DBError.exec("\(errorMessage) — SQL: \(sql.prefix(300))")
@@ -109,8 +121,7 @@ final class Database: @unchecked Sendable {
 
     func query(_ sql: String, _ params: [DBValue] = []) throws -> [[DBValue]] {
         try queue.sync {
-            let stmt = try prepareUnsafe(sql, params)
-            defer { sqlite3_finalize(stmt) }
+            let stmt = try cachedStmt(sql, params)
             var rows: [[DBValue]] = []
             let cols = Int(sqlite3_column_count(stmt))
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -130,8 +141,7 @@ final class Database: @unchecked Sendable {
 
     func columnNames(_ sql: String, _ params: [DBValue] = []) throws -> [String] {
         try queue.sync {
-            let stmt = try prepareUnsafe(sql, params)
-            defer { sqlite3_finalize(stmt) }
+            let stmt = try cachedStmt(sql, params)
             let cols = Int(sqlite3_column_count(stmt))
             return (0..<cols).map { String(cString: sqlite3_column_name(stmt, Int32($0))) }
         }
@@ -229,11 +239,29 @@ final class Database: @unchecked Sendable {
 
     // MARK: - private
 
-    private func prepareUnsafe(_ sql: String, _ params: [DBValue]) throws -> OpaquePointer? {
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(handle, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw DBError.prepare("\(errorMessage) — SQL: \(sql.prefix(300))")
+    /// Returns a reset, bound statement from the cache (or prepares and caches it).
+    /// Must only be called on the serial queue.
+    private func cachedStmt(_ sql: String, _ params: [DBValue]) throws -> OpaquePointer? {
+        let stmt: OpaquePointer?
+        if let cached = stmtCache[sql] {
+            sqlite3_reset(cached)
+            stmt = cached
+        } else {
+            var s: OpaquePointer?
+            guard sqlite3_prepare_v2(handle, sql, -1, &s, nil) == SQLITE_OK else {
+                throw DBError.prepare("\(errorMessage) — SQL: \(sql.prefix(300))")
+            }
+            stmt = s
+            if stmtKeys.count >= stmtCacheLimit, let oldest = stmtKeys.first {
+                stmtKeys.removeFirst()
+                if let evicted = stmtCache.removeValue(forKey: oldest) {
+                    sqlite3_finalize(evicted)
+                }
+            }
+            stmtCache[sql] = stmt
+            stmtKeys.append(sql)
         }
+        sqlite3_clear_bindings(stmt)
         Database.bind(stmt, params)
         return stmt
     }
