@@ -33,8 +33,8 @@ struct AskView: View {
                             .padding(.horizontal)
                     }
                     if let plan { planCard(plan) }
-                    if let narrative { narrativeCard(narrative) }
                     if let result, !result.isEmpty { resultCard(result) }
+                    if let narrative { narrativeCard(narrative) }
                     if plan == nil && !running { suggestionCard }
                 }
                 .padding(.vertical, 12)
@@ -146,7 +146,7 @@ struct AskView: View {
     private func narrativeCard(_ text: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("report.aiNarrative".loc, systemImage: "sparkles").font(.caption.bold())
-            Text(text).font(.subheadline).textSelection(.enabled)
+            MarkdownTextView(markdown: text)
         }
         .padding()
         .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))

@@ -62,7 +62,7 @@ struct ReportDetailView: View {
                     if let aiText {
                         VStack(alignment: .leading, spacing: 6) {
                             Label("report.aiNarrative".loc, systemImage: "sparkles").font(.caption.bold())
-                            Text(aiText).font(.subheadline).textSelection(.enabled)
+                            MarkdownTextView(markdown: aiText)
                         }
                         .padding()
                         .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
@@ -133,7 +133,9 @@ struct ReportDetailView: View {
     }
 }
 
-/// Minimal markdown presenter: headings, bold, bullets and tables.
+/// Minimal markdown presenter: headings, bold, bullets, numbered lists,
+/// code blocks and tables. Used for stored reports and AI narratives,
+/// which arrive as raw markdown and must not be shown with literal `**`/`|`.
 struct MarkdownTextView: View {
     let markdown: String
 
@@ -142,23 +144,35 @@ struct MarkdownTextView: View {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 switch block {
                 case .heading(let level, let text):
-                    Text(text)
+                    Text(attributed(text))
                         .font(level == 1 ? .title2.bold() : (level == 2 ? .headline : .subheadline.bold()))
                         .padding(.top, level == 1 ? 0 : 8)
                 case .paragraph(let text):
                     Text(attributed(text)).font(.subheadline)
                 case .bullet(let text):
                     HStack(alignment: .top, spacing: 6) {
-                        Text("•")
+                        Text("•").font(.subheadline)
                         Text(attributed(text)).font(.subheadline)
                     }
+                case .numbered(let n, let text):
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("\(n).").font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+                        Text(attributed(text)).font(.subheadline)
+                    }
+                case .code(let text):
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        Text(text).font(.caption.monospaced())
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
                 case .table(let rows):
                     ScrollView(.horizontal, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(rows.enumerated()), id: \.offset) { i, cells in
                                 HStack(spacing: 0) {
                                     ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
-                                        Text(cell)
+                                        Text(attributed(cell))
                                             .font(i == 0 ? .caption.bold() : .caption)
                                             .lineLimit(1)
                                             .frame(width: 120, alignment: .leading)
@@ -178,33 +192,72 @@ struct MarkdownTextView: View {
     }
 
     private func attributed(_ s: String) -> AttributedString {
-        (try? AttributedString(markdown: s)) ?? AttributedString(s)
+        var options = AttributedString.MarkdownParsingOptions()
+        options.interpretedSyntax = .inlineOnlyPreservingWhitespace
+        return (try? AttributedString(markdown: s, options: options)) ?? AttributedString(s)
     }
 
     enum Block {
         case heading(Int, String)
         case paragraph(String)
         case bullet(String)
+        case numbered(Int, String)
+        case code(String)
         case table([[String]])
+    }
+
+    /// Strips a single outer code fence — AI models sometimes wrap whole
+    /// markdown answers in ```markdown … ```.
+    private var source: String {
+        let t = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard t.hasPrefix("```"), t.hasSuffix("```"), t.contains("\n"),
+              let firstNL = t.firstIndex(of: "\n") else { return markdown }
+        let innerStart = t.index(after: firstNL)
+        let innerEnd = t.index(t.endIndex, offsetBy: -3)
+        guard innerStart < innerEnd else { return markdown }
+        let inner = t[innerStart..<innerEnd]
+        // Only unwrap when the fence wraps the WHOLE answer (no other fences inside).
+        guard !inner.contains("```") else { return markdown }
+        return String(inner)
     }
 
     private var blocks: [Block] {
         var out: [Block] = []
         var tableRows: [[String]] = []
+        var codeLines: [String] = []
+        var inCode = false
 
         func flushTable() {
             if !tableRows.isEmpty { out.append(.table(tableRows)); tableRows = [] }
         }
+        func flushCode() {
+            if !codeLines.isEmpty { out.append(.code(codeLines.joined(separator: "\n"))); codeLines = [] }
+        }
 
-        for raw in markdown.components(separatedBy: "\n") {
+        for raw in source.components(separatedBy: "\n") {
             let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("```") {
+                if inCode {
+                    flushCode()
+                    inCode = false
+                } else {
+                    flushTable()
+                    inCode = true
+                }
+                continue
+            }
+            if inCode {
+                codeLines.append(raw)
+                continue
+            }
             if line.isEmpty { flushTable(); continue }
             if line.hasPrefix("|") {
-                let cells = line.split(separator: "|", omittingEmptySubsequences: false)
+                var cells = line.split(separator: "|", omittingEmptySubsequences: false)
                     .map { $0.trimmingCharacters(in: .whitespaces) }
-                    .dropFirst().dropLast()
+                if line.hasPrefix("|"), !cells.isEmpty { cells.removeFirst() }
+                if line.hasSuffix("|"), !cells.isEmpty { cells.removeLast() }
                 if cells.allSatisfy({ $0.allSatisfy { c in c == "-" || c == ":" } }) { continue }
-                tableRows.append(Array(cells))
+                if !cells.isEmpty { tableRows.append(cells) }
                 continue
             }
             flushTable()
@@ -212,9 +265,22 @@ struct MarkdownTextView: View {
             else if line.hasPrefix("## ") { out.append(.heading(2, String(line.dropFirst(3)))) }
             else if line.hasPrefix("# ") { out.append(.heading(1, String(line.dropFirst(2)))) }
             else if line.hasPrefix("- ") || line.hasPrefix("* ") { out.append(.bullet(String(line.dropFirst(2)))) }
+            else if let (n, item) = numberedItem(line) { out.append(.numbered(n, item)) }
             else { out.append(.paragraph(line)) }
         }
+        flushCode()
         flushTable()
         return out
+    }
+
+    /// Matches `1. text` — requires a space after the dot so "1.5 million" stays a paragraph.
+    private func numberedItem(_ line: String) -> (Int, String)? {
+        guard let dot = line.firstIndex(of: "."), dot > line.startIndex else { return nil }
+        let after = line.index(after: dot)
+        guard after < line.endIndex, line[after] == " " else { return nil }
+        let num = line[line.startIndex..<dot]
+        guard !num.isEmpty, num.allSatisfy(\.isNumber), let n = Int(num) else { return nil }
+        let rest = line[line.index(after: after)...].trimmingCharacters(in: .whitespaces)
+        return rest.isEmpty ? nil : (n, rest)
     }
 }

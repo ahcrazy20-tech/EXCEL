@@ -318,7 +318,7 @@ struct ExportView: View {
                         ? try Exporter.xlsx(table: table, name: name)
                         : try Exporter.json(table: table, name: name)
                 case .markdown, .html, .pdf:
-                    if (fmt == .html || fmt == .pdf), coloredGrid, engine.sheet.hasColors {
+                    if (fmt == .html || fmt == .pdf), coloredGrid, await engine.sheet.hasColors {
                         // Coloured grid export: the actual sheet with its cell colours.
                         let html = try Exporter.htmlGrid(engine: engine, query: query, limit: cap, rtl: arabic) { p in
                             Task { @MainActor in progress = p }

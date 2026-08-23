@@ -13,7 +13,8 @@ struct DataGridView: View {
     private let indexWidth: CGFloat = 56
 
     var body: some View {
-        GeometryReader { geo in
+        let columns = vm.visibleColumns
+        return GeometryReader { geo in
             ScrollView(.horizontal, showsIndicators: true) {
                 VStack(spacing: 0) {
                     headerRow
@@ -22,7 +23,7 @@ struct DataGridView: View {
                         ScrollView(.vertical, showsIndicators: true) {
                             LazyVStack(spacing: 0) {
                                 ForEach(0..<vm.totalRows, id: \.self) { index in
-                                    rowView(index)
+                                    rowView(index, columns: columns)
                                         .id(index)
                                         .onAppear { vm.prefetch(around: index) }
                                 }
@@ -103,7 +104,7 @@ struct DataGridView: View {
     // MARK: Rows
 
     @ViewBuilder
-    private func rowView(_ index: Int) -> some View {
+    private func rowView(_ index: Int, columns: [ColumnInfo]) -> some View {
         let values = vm.row(at: index)
         let fills = vm.fills(page: index / vm.pageSize, offset: index % vm.pageSize)
         HStack(spacing: 0) {
@@ -115,11 +116,11 @@ struct DataGridView: View {
                 .overlay(Rectangle().frame(width: 0.5).foregroundStyle(Color(uiColor: .separator)), alignment: .trailing)
 
             if let values {
-                ForEach(vm.visibleColumns) { col in
+                ForEach(columns) { col in
                     cell(values: values, col: col, fills: fills)
                 }
             } else {
-                ForEach(vm.visibleColumns) { col in
+                ForEach(columns) { col in
                     Rectangle()
                         .fill(Color.secondary.opacity(0.08))
                         .frame(width: vm.width(for: col, default: defaultWidth) - 10, height: rowHeight * 0.42)
@@ -144,12 +145,13 @@ struct DataGridView: View {
         // values[0] is the rowid
         let value = col.index + 1 < values.count ? values[col.index + 1] : DBValue.null
         let numeric = col.kind == .number
-        let fillColor = fills?[col.index].map { Color(argb: $0) }
+        let fillARGB = fills?[col.index]
+        let fillColor = fillARGB.map { Color(argb: $0) }
         let textColor: Color = {
-            guard let fillColor else { return .primary }
-            return fillColor.luminance < 0.55 ? .white : .primary
+            guard let fillARGB else { return .primary }
+            return Self.isDarkFill(fillARGB) ? .white : .primary
         }()
-        return Text(display(value, kind: col.kind))
+        Text(display(value, kind: col.kind))
             .font(.system(size: fontSize, design: numeric ? .monospaced : .default))
             .foregroundStyle(value.isEmptyText
                              ? (fillColor != nil ? textColor.opacity(0.55) : Color.secondary.opacity(0.5))
@@ -170,5 +172,14 @@ struct DataGridView: View {
         case .text(let s): return s
         case .null: return ""
         }
+    }
+
+    /// Luminance test straight from the ARGB bits — a UIColor round-trip per
+    /// coloured cell was a measurable scroll cost on colour-filled sheets.
+    private static func isDarkFill(_ argb: UInt32) -> Bool {
+        let r = Double((argb >> 16) & 0xFF)
+        let g = Double((argb >> 8) & 0xFF)
+        let b = Double(argb & 0xFF)
+        return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.55
     }
 }

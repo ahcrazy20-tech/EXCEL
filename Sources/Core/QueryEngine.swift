@@ -517,7 +517,7 @@ final class QueryEngine: @unchecked Sendable {
         let groupBy = selects.joined(separator: ",")
         let groupCap = 200_000
         let sql = "SELECT \(groupBy), \(metric) FROM \(sheet.tableName.sqlIdentifier)\(whereSQL) GROUP BY \(groupBy) LIMIT \(groupCap + 1)"
-        let groups = try db.query(sql, p)
+        var groups = try db.query(sql, p)
         if groups.count > groupCap {
             out.groupCapReached = true
             groups.removeLast()

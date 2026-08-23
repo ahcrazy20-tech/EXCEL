@@ -162,7 +162,9 @@ final class SheetViewModel: ObservableObject {
     func prefetch(around index: Int) {
         let page = index / pageSize
         requestPage(page)
+        // Look two pages ahead so fast scrolling doesn't hit placeholder rows.
         requestPage(page + 1)
+        requestPage(page + 2)
         if page > 0 { requestPage(page - 1) }
     }
 

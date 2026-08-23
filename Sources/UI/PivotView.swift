@@ -242,7 +242,7 @@ struct PivotView: View {
         HStack(spacing: 0) {
             Text("pivot.total".loc)
                 .font(.caption.bold())
-                .frame(width: 130 * max(1, r.rowDimNames.count), alignment: .leading)
+                .frame(width: 130 * CGFloat(max(1, r.rowDimNames.count)), alignment: .leading)
                 .padding(.horizontal, 6)
             ForEach(Array(r.columnTotals.enumerated()), id: \.offset) { _, total in
                 Text(ReportBuilder.formatNumber(total))
@@ -259,9 +259,9 @@ struct PivotView: View {
         .background(Color.accentColor.opacity(0.08))
     }
 
-    private func heat(_ value: Double, over max: Double) -> Color {
+    private func heat(_ value: Double, over maxValue: Double) -> Color {
         guard value > 0 else { return Color.clear }
-        let ratio = max(0, min(1, value / max))
+        let ratio = max(0, min(1, value / maxValue))
         return Color.accentColor.opacity(0.06 + 0.32 * ratio)
     }
 

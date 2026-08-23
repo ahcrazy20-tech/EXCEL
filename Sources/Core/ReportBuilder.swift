@@ -12,13 +12,37 @@ struct ReportBuilder {
         self.arabic = arabic
     }
 
+    /// Fast, allocation-light decimal formatting. Creating a fresh NumberFormatter
+    /// per cell (this runs for every numeric cell on every grid render) made
+    /// scrolling stutter on large sheets. Output matches the previous formatter:
+    /// comma grouping, up to 2 decimals for |d| >= 1000 and up to 4 below that.
     static func formatNumber(_ d: Double) -> String {
-        let f = NumberFormatter()
-        f.numberStyle = .decimal
-        f.maximumFractionDigits = abs(d) >= 1000 ? 2 : 4
-        f.groupingSeparator = ","
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return f.string(from: NSNumber(value: d)) ?? String(d)
+        guard d.isFinite else { return String(d) }
+        let fractionDigits = abs(d) >= 1000 ? 2 : 4
+        let s = String(format: "%.\(fractionDigits)f", d)
+        guard let dot = s.firstIndex(of: ".") else { return groupThousands(s) }
+        let intPart = groupThousands(String(s[s.startIndex..<dot]))
+        var frac = String(s[s.index(after: dot)...])
+        while frac.hasSuffix("0") { frac.removeLast() }
+        return frac.isEmpty ? intPart : intPart + "." + frac
+    }
+
+    private static func groupThousands(_ intPart: String) -> String {
+        var digits = intPart
+        var sign = ""
+        if let first = digits.first, first == "-" || first == "+" {
+            sign = String(first)
+            digits.removeFirst()
+        }
+        guard digits.count > 3 else { return sign + digits }
+        var grouped = ""
+        var n = 0
+        for ch in digits.reversed() {
+            if n > 0 && n % 3 == 0 { grouped.append(",") }
+            grouped.append(ch)
+            n += 1
+        }
+        return sign + String(grouped.reversed())
     }
 
     static func formatInt(_ i: Int) -> String { formatNumber(Double(i)) }
