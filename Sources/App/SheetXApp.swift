@@ -41,5 +41,11 @@ struct RootView: View {
         } message: {
             Text(library.errorMessage ?? "")
         }
+        .onOpenURL { url in
+            // Files opened via "Open in SheetX" / the Files app land here.
+            guard url.isFileURL else { return }
+            tab = 0
+            library.importFiles([url], headerRow: settings.headerRowDefault)
+        }
     }
 }
