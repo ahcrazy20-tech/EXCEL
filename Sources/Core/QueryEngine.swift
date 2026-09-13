@@ -222,9 +222,11 @@ final class QueryEngine: @unchecked Sendable {
 
     // MARK: Row access
 
+    // Qualify the source: SQLite may omit the database in its authorizer callback
+    // for an unqualified, optimized COUNT(*). Keep the strict authorizer unchanged.
     func countRows(_ spec: QuerySpec) throws -> Int {
         let (w, p) = whereClause(spec)
-        let sql = "SELECT COUNT(*) FROM \(sheet.tableName.sqlIdentifier)" + (w.isEmpty ? "" : " WHERE \(w)")
+        let sql = "SELECT COUNT(*) FROM main.\(sheet.tableName.sqlIdentifier)" + (w.isEmpty ? "" : " WHERE \(w)")
         return Int(try db.scalar(sql, p).doubleValue ?? 0)
     }
 
@@ -234,11 +236,11 @@ final class QueryEngine: @unchecked Sendable {
         // so a page is a direct range seek instead of scanning past OFFSET rows.
         // Jumping to row 1,000,000 becomes instant.
         if !spec.isActive {
-            let sql = "SELECT rowid,\(cols) FROM \(sheet.tableName.sqlIdentifier) WHERE rowid >= ? AND rowid < ?"
+            let sql = "SELECT rowid,\(cols) FROM main.\(sheet.tableName.sqlIdentifier) WHERE rowid >= ? AND rowid < ?"
             return try db.query(sql, [.int(Int64(offset + 1)), .int(Int64(offset + limit + 1))])
         }
         let (w, p) = whereClause(spec)
-        var sql = "SELECT rowid,\(cols) FROM \(sheet.tableName.sqlIdentifier)"
+        var sql = "SELECT rowid,\(cols) FROM main.\(sheet.tableName.sqlIdentifier)"
         if !w.isEmpty { sql += " WHERE \(w)" }
         let order = orderClause(spec)
         if !order.isEmpty { sql += " \(order)" }
@@ -248,7 +250,7 @@ final class QueryEngine: @unchecked Sendable {
 
     func fetchRow(rowid: Int64) throws -> [DBValue]? {
         let cols = sheet.columns.map { "c\($0.index)" }.joined(separator: ",")
-        return try db.query("SELECT \(cols) FROM \(sheet.tableName.sqlIdentifier) WHERE rowid=?", [.int(rowid)]).first
+        return try db.query("SELECT \(cols) FROM main.\(sheet.tableName.sqlIdentifier) WHERE rowid=?", [.int(rowid)]).first
     }
 
     /// Fetches the stored fill-colour strings (`"col:argb;col:argb"`) for the given
@@ -317,7 +319,7 @@ final class QueryEngine: @unchecked Sendable {
             titles.append(aggregationTitle(a))
         }
 
-        var sql = "SELECT " + selects.joined(separator: ", ") + " FROM \(sheet.tableName.sqlIdentifier)"
+        var sql = "SELECT " + selects.joined(separator: ", ") + " FROM main.\(sheet.tableName.sqlIdentifier)"
         if !w.isEmpty { sql += " WHERE \(w)" }
         if !spec.groupBy.isEmpty {
             sql += " GROUP BY " + spec.groupBy.compactMap { column($0) }.joined(separator: ", ")
@@ -348,7 +350,7 @@ final class QueryEngine: @unchecked Sendable {
         guard let col = column(columnIndex) else { return nil }
         let (w, p) = whereClause(query)
         let numeric = "CAST(REPLACE(CAST(\(col) AS TEXT),',','') AS REAL)"
-        var base = "FROM \(sheet.tableName.sqlIdentifier) WHERE \(numeric) IS NOT NULL AND typeof(\(col)) IN ('integer','real')"
+        var base = "FROM main.\(sheet.tableName.sqlIdentifier) WHERE \(numeric) IS NOT NULL AND typeof(\(col)) IN ('integer','real')"
         if !w.isEmpty { base += " AND \(w)" }
         let count = Int(try db.scalar("SELECT COUNT(*) \(base)", p).doubleValue ?? 0)
         guard count > 0 else { return nil }
@@ -384,7 +386,7 @@ final class QueryEngine: @unchecked Sendable {
             SELECT COUNT(*),
                    SUM(CASE WHEN \(col) IS NOT NULL AND TRIM(CAST(\(col) AS TEXT))<>'' THEN 1 ELSE 0 END),
                    COUNT(DISTINCT \(col))
-            FROM \(sheet.tableName.sqlIdentifier)\(whereSQL)
+            FROM main.\(sheet.tableName.sqlIdentifier)\(whereSQL)
             """, p).first ?? []
 
         var s = ColumnStats(name: info.name, kind: info.kind,
@@ -396,7 +398,7 @@ final class QueryEngine: @unchecked Sendable {
             let row = try db.query("""
                 SELECT SUM(\(numeric)), AVG(\(numeric)), MIN(\(numeric)), MAX(\(numeric)),
                        CASE WHEN COUNT(\(numeric))>1 THEN SQRT((SUM(\(numeric)*\(numeric)) - SUM(\(numeric))*SUM(\(numeric))/COUNT(\(numeric)))/(COUNT(\(numeric))-1)) ELSE 0 END
-                FROM \(sheet.tableName.sqlIdentifier)\(whereSQL)
+                FROM main.\(sheet.tableName.sqlIdentifier)\(whereSQL)
                 """, p).first ?? []
             if row.count >= 5 {
                 s.sum = row[0].doubleValue
@@ -407,14 +409,14 @@ final class QueryEngine: @unchecked Sendable {
             }
             s.median = try median(columnIndex: columnIndex, query: query)
         } else {
-            let row = try db.query("SELECT MIN(\(col)), MAX(\(col)) FROM \(sheet.tableName.sqlIdentifier)\(whereSQL)", p).first ?? []
+            let row = try db.query("SELECT MIN(\(col)), MAX(\(col)) FROM main.\(sheet.tableName.sqlIdentifier)\(whereSQL)", p).first ?? []
             if row.count >= 2 { s.min = row[0]; s.max = row[1] }
         }
 
         if includeTop {
             let rows = try db.query("""
                 SELECT CAST(\(col) AS TEXT) AS v, COUNT(*) AS n
-                FROM \(sheet.tableName.sqlIdentifier)\(whereSQL)
+                FROM main.\(sheet.tableName.sqlIdentifier)\(whereSQL)
                 \(whereSQL.isEmpty ? "WHERE" : "AND") \(col) IS NOT NULL AND TRIM(CAST(\(col) AS TEXT))<>''
                 GROUP BY v ORDER BY n DESC LIMIT 10
                 """, p)
@@ -426,7 +428,7 @@ final class QueryEngine: @unchecked Sendable {
     func distinctValues(columnIndex: Int, limit: Int = 500) throws -> [String] {
         let col = "c\(columnIndex)"
         let rows = try db.query("""
-            SELECT DISTINCT CAST(\(col) AS TEXT) FROM \(sheet.tableName.sqlIdentifier)
+            SELECT DISTINCT CAST(\(col) AS TEXT) FROM main.\(sheet.tableName.sqlIdentifier)
             WHERE \(col) IS NOT NULL AND TRIM(CAST(\(col) AS TEXT))<>''
             ORDER BY 1 LIMIT \(limit)
             """)
@@ -440,7 +442,7 @@ final class QueryEngine: @unchecked Sendable {
         let (whereSQL, params) = whereClause(query)
         let cap = max(1, min(limit, 5000))
         var rows = try db.query("""
-            SELECT \(sel), COUNT(*) AS n FROM \(sheet.tableName.sqlIdentifier)
+            SELECT \(sel), COUNT(*) AS n FROM main.\(sheet.tableName.sqlIdentifier)
             \(whereSQL.isEmpty ? "" : "WHERE " + whereSQL)
             GROUP BY \(sel) HAVING n > 1 ORDER BY n DESC LIMIT \(cap + 1)
             """, params)
@@ -527,7 +529,7 @@ final class QueryEngine: @unchecked Sendable {
         if let cd = colDim { selects.append(cd) }
         let groupBy = selects.joined(separator: ",")
         let groupCap = 200_000
-        let sql = "SELECT \(groupBy), \(metric) FROM \(sheet.tableName.sqlIdentifier)\(whereSQL) GROUP BY \(groupBy) LIMIT \(groupCap + 1)"
+        let sql = "SELECT \(groupBy), \(metric) FROM main.\(sheet.tableName.sqlIdentifier)\(whereSQL) GROUP BY \(groupBy) LIMIT \(groupCap + 1)"
         var groups = try db.query(sql, p)
         if groups.count > groupCap {
             out.groupCapReached = true

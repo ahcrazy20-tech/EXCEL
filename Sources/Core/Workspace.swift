@@ -112,9 +112,11 @@ final class Workspace: @unchecked Sendable {
         CREATE INDEX IF NOT EXISTS idx_cols_sheet ON meta_columns(sheet_id);
         """)
 
-        // Added after the first release: per-sheet fill-colour flag.
-        // ALTER fails once the column exists, which is fine.
-        try? db.exec("ALTER TABLE meta_sheets ADD COLUMN has_colors INTEGER NOT NULL DEFAULT 0;")
+        // Inspect the old schema instead of intentionally throwing on every open.
+        let sheetColumns = try db.query("PRAGMA table_info(meta_sheets)")
+        if !sheetColumns.contains(where: { $0.count > 1 && $0[1].stringValue == "has_colors" }) {
+            try db.exec("ALTER TABLE meta_sheets ADD COLUMN has_colors INTEGER NOT NULL DEFAULT 0;")
+        }
     }
 
     // MARK: - Reading catalog

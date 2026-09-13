@@ -252,6 +252,30 @@ final class PreparationTests: XCTestCase {
         XCTAssertEqual(try fixture.db.scalar("SELECT COUNT(*) FROM meta_sheets"), .int(1))
     }
 
+    func testCancellationDuringPublicationRollsBackAllNewMetadata() throws {
+        let fixture = try AnalysisFixture()
+        let preview = try clean(fixture, steps: [])
+        try fixture.db.exec("""
+            CREATE TRIGGER slow_publication BEFORE INSERT ON meta_preparations BEGIN
+                SELECT (WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100000000) SELECT SUM(x) FROM n);
+            END;
+            """)
+        let token = QueryCancellation()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { token.cancel() }
+        XCTAssertThrowsError(try PreparationEngine.publish(preview, name: "Cancelled", workspacePath: fixture.db.path,
+            approveDuplicates: false, approveInvalid: false, cancellation: token)) { XCTAssertTrue($0 is CancellationError) }
+        XCTAssertEqual(try fixture.db.scalar("SELECT COUNT(*) FROM meta_sheets"), .int(1))
+        XCTAssertEqual(try fixture.db.scalar("SELECT COUNT(*) FROM meta_workbooks"), .int(1))
+        XCTAssertEqual(try fixture.db.scalar("SELECT COUNT(*) FROM meta_preparations"), .int(0))
+        XCTAssertEqual(try fixture.db.scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name GLOB 'data_*'"), .int(1))
+    }
+
+    func testActualSourceRowCountMismatchIsRejected() throws {
+        let fixture = try AnalysisFixture()
+        try fixture.db.run("INSERT INTO \(fixture.sheet.tableName) VALUES('unexpected',99)")
+        XCTAssertThrowsError(try clean(fixture, steps: []))
+    }
+
     func testProgressHandlerInterruptsLongSQLAndConnectionRecovers() throws {
         let fixture = try AnalysisFixture()
         let db = try Database(path: fixture.directory.appendingPathComponent("worker.sqlite").path)

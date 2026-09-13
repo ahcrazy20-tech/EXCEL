@@ -8,7 +8,7 @@ enum PreparationLocalization {
         "prep.derived": ("Derived", "ورقة مشتقة"),
         "prep.immutable": ("Your source sheets stay unchanged", "الأوراق الأصلية تبقى دون تغيير"),
         "prep.valuesOnly": ("Works on the entire sheet, not just filtered rows. Results contain values only: source formatting, colors, and formulas are not copied. Everything runs locally; no AI or network is used.", "تُعالج الورقة كاملة، وليس الصفوف المفلترة فقط. النتيجة قيم فقط؛ لا تُنسخ التنسيقات أو الألوان أو الصيغ. المعالجة محلية دون ذكاء اصطناعي أو شبكة."),
-        "prep.limits": ("Up to 1 million rows per source/output, 128 output columns, 20 cleaning steps, and 120 seconds per run. Large operations may need substantial free storage.", "حتى مليون صف لكل مصدر أو نتيجة، و128 عمودًا، و20 خطوة تنظيف، و120 ثانية للتنفيذ. قد تتطلب العمليات الكبيرة مساحة تخزين حرة كبيرة."),
+        "prep.limits": ("Up to 1 million rows per source/output, 128 columns per source/output, 20 cleaning steps, and 120 seconds per run. Large operations may need substantial free storage.", "حتى مليون صف لكل مصدر أو نتيجة، و128 عمودًا لكل مصدر أو نتيجة، و20 خطوة تنظيف، و120 ثانية للتنفيذ. قد تتطلب العمليات الكبيرة مساحة تخزين حرة كبيرة."),
         "prep.outputName": ("New sheet name (up to 120 characters)", "اسم الورقة الجديدة (حتى 120 حرفًا)"),
         "prep.saved": ("New sheet saved to My Sheets", "تم حفظ ورقة جديدة في ملفاتي"),
         "prep.open": ("Open new sheet", "فتح الورقة الجديدة"),

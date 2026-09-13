@@ -2,6 +2,14 @@ import XCTest
 @testable import SheetX
 
 final class AnalysisSafetyTests: XCTestCase {
+    func testUnfilteredCountUsesQualifiedSourceWithoutWeakeningAuthorization() throws {
+        let fixture = try AnalysisFixture()
+        let reader = try fixture.reader()
+        let engine = QueryEngine(db: reader, sheet: fixture.sheet)
+        XCTAssertEqual(try engine.countRows(QuerySpec()), 3)
+        XCTAssertThrowsError(try reader.readResult("SELECT COUNT(*) FROM main.meta_sheets"))
+    }
+
     func testSQLAliasAndStringLiteralsAreNotRewritten() throws {
         let fixture = try AnalysisFixture()
         let engine = QueryEngine(db: fixture.db, sheet: fixture.sheet)

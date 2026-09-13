@@ -29,7 +29,7 @@ Ordered recipes support:
 - Unicode trim, lower/uppercase, Arabic/Persian digits → ASCII digits.
 - Case-sensitive literal replacement (not regex), text cells only.
 - Blank text → NULL, fill missing values with **literal text**, or drop rows missing a selected column.
-- Strict explicit-format numeric conversion: dot/comma/Arabic decimal and grouping separators; validates thousands grouping instead of blindly removing commas. Exact Int64 integers, finite decimal/scientific numbers with at most 15 significant digits. No currency/percent or guessed separator formats. Leading zeros are removed only when explicitly converting to number.
+- Strict explicit-format numeric conversion: dot/comma/Arabic decimal and grouping separators; validates thousands grouping instead of blindly removing commas. Exact Int64 integers, finite decimal/scientific numbers with at most 15 significant digits. Numeric overflow/underflow is rejected. No currency/percent or guessed separator formats. Leading zeros are removed only when explicitly converting to number.
 - Strict Gregorian date conversion: `yyyy-MM-dd`, `dd/MM/yyyy`, or `MM/dd/yyyy` input; ISO `yyyy-MM-dd` output. UTC/POSIX calendar, exact round-trip validation. No Excel serial dates, time-of-day, Hijri conversion, or date guessing.
 - Whole-row deduplication retains the first occurrence using SQLite grouping semantics (numeric integer/real equivalents group together; text remains distinct).
 
@@ -45,7 +45,7 @@ Each step reports changed cells, removed rows, and invalid conversions. Invalid 
 - No NUMERIC affinity in derived tables: text IDs, leading zeros, and SQLite storage types are preserved unless the recipe explicitly converts them. Publication compacts rowids for grid paging.
 - Existing imported/derived values are immutable within the app; validation relies on that invariant plus source identity/schema/count checks, not a full content hash.
 - **Values only, entire sheet:** current grid filters/sorts, formatting, fill colors, formulas, and indexes are not copied. Formula results already imported as values remain values.
-- Maximum **1,000,000 rows per source/output**, **128 output columns**, **20 cleaning steps**, **120 seconds per prepare/save**. Parameters up to 1,000 characters; output names up to 120.
+- Maximum **1,000,000 rows per source/output**, **128 columns per source/output**, **20 cleaning steps**, **120 seconds per prepare/save**. Parameters up to 1,000 characters; output names up to 120.
 - Each sample is **30 rows / 4 MiB**; previews use the same clipped/paginated table and full-cell reader as Ask. Counts cover the full result; a sample is not an export of all rows.
 - SQLite value/row length limit: **1 MiB** on preparation connections. The staging database page limit is **512 MiB**; temporary sorting, journals, and final outputs can require additional disk space. This is not a total disk quota. Disk/SQLite errors refuse publication, not silent truncation.
 - Cancel and Save/Preview controls remain outside scrolling previews. Cancellation is cooperative through SQLite progress callbacks and step checks. A tap after commit does not undo the committed output or falsely report rollback.
@@ -56,6 +56,7 @@ Each step reports changed cells, removed rows, and invalid conversions. Invalid 
 - New preparation tests cover join cardinality/duplicates/blanks/unmatched rows, exact versus normalized keys, lookup rejection, expansion limits, strict conversions, undo/redo, immutable sources, leading zeros/NUL text, rowid compaction, history/rebuild, source deletion/schema changes, transactional rollback, cancellation/timeouts, read-only attachments, AI isolation, and bounded previews.
 - `bash ci/test-core.sh` builds the **unchanged Foundation/SQLite production sources** in a temporary Swift package and runs the core XCTest suites on a macOS host. Only localization is adapted for the host. It is also a pre-build test gate in `project.yml`; the existing GitHub build workflow can execute these tests without a simulator or workflow-file edits.
 - iOS-specific preferences/UI tests are not part of the host suite. A successful host test run is not a simulator or physical-device test.
+- Executing the previously unrun overview tests exposed an existing unqualified `COUNT(*)`/SQLite-authorizer mismatch. Internal reads now qualify `main` explicitly; the strict AI authorizer is unchanged. Migration also checks column existence rather than intentionally swallowing a duplicate-column error on every open.
 - Native build/test results will be recorded after the release build completes.
 
 ### Device acceptance checklist

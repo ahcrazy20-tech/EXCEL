@@ -331,8 +331,8 @@ struct PreparationHistoryView: View {
                                 Text(source.name).font(.headline)
                                 Text("ID \(source.id) · \(source.rowCount) \("sheet.rows".loc)").font(.caption)
                             }
-                            Button("prep.rebuild".loc) { rebuild = true }.disabled(recipe.version != 1)
-                            if recipe.version != 1 { Text("prep.error.recipe".loc) }
+                            Button("prep.rebuild".loc) { rebuild = true }.disabled(!valid(recipe))
+                            if !valid(recipe) { Text("prep.error.recipe".loc) }
                         } else { Text("prep.error.recipe".loc) }
                     }
                     if let summary = record.summary { PreparationSummaryView(summary: summary) }
@@ -352,6 +352,9 @@ struct PreparationHistoryView: View {
                 PreparationView(sheet: sheet, mode: recipeMode(recipe), recipe: recipe)
             }
         }
+    }
+    private func valid(_ recipe: PreparationRecipe) -> Bool {
+        do { try recipe.validate(); return true } catch { return false }
     }
     private func recipeMode(_ recipe: PreparationRecipe) -> PreparationMode {
         if case .clean = recipe.operation { return .clean }; return .join

@@ -98,7 +98,7 @@ struct PreparationRecipe: Codable, Hashable {
         for source in sources { try source.validateStructure() }
         switch operation {
         case .clean(let recipe):
-            guard recipe.steps.count <= 20 else { throw PreparationError.recipe }
+            guard recipe.steps.count <= 20, Set(recipe.steps.map(\.id)).count == recipe.steps.count else { throw PreparationError.recipe }
             for step in recipe.steps {
                 guard (!step.operation.needsColumn || recipe.source.columns.indices.contains(step.column)),
                       step.value.count <= 1000, step.replacement.count <= 1000 else { throw PreparationError.recipe }
