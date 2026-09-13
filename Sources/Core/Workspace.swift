@@ -31,6 +31,7 @@ struct SheetInfo: Identifiable, Hashable {
     var index: Int
     /// True when a `data_N_f` side table with per-cell fill colours exists.
     var hasColors: Bool = false
+    var isDerived: Bool = false
 
     var fillsTableName: String { tableName + "_f" }
 }
@@ -104,6 +105,9 @@ final class Workspace: @unchecked Sendable {
             body TEXT NOT NULL,
             created_at REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS meta_preparations(
+            sheet_id INTEGER PRIMARY KEY, recipe TEXT NOT NULL, summary TEXT NOT NULL, created_at REAL NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_sheets_wb ON meta_sheets(workbook_id);
         CREATE INDEX IF NOT EXISTS idx_cols_sheet ON meta_columns(sheet_id);
         """)
@@ -134,7 +138,7 @@ final class Workspace: @unchecked Sendable {
 
     func loadSheets(workbookID: Int64) throws -> [SheetInfo] {
         let rows = try db.query(
-            "SELECT id,name,table_name,row_count,sheet_index,has_colors FROM meta_sheets WHERE workbook_id=? ORDER BY sheet_index",
+            "SELECT id,name,table_name,row_count,sheet_index,has_colors,EXISTS(SELECT 1 FROM meta_preparations p WHERE p.sheet_id=meta_sheets.id) FROM meta_sheets WHERE workbook_id=? ORDER BY sheet_index",
             [.int(workbookID)])
         return try rows.compactMap { r in
             guard case .int(let sid) = r[0] else { return nil }
@@ -146,7 +150,8 @@ final class Workspace: @unchecked Sendable {
                 rowCount: Int(r[3].doubleValue ?? 0),
                 columns: try loadColumns(sheetID: sid),
                 index: Int(r[4].doubleValue ?? 0),
-                hasColors: r.count > 5 && (r[5].doubleValue ?? 0) > 0)
+                hasColors: r.count > 5 && (r[5].doubleValue ?? 0) > 0,
+                isDerived: r.count > 6 && (r[6].doubleValue ?? 0) > 0)
         }
     }
 
@@ -236,6 +241,7 @@ final class Workspace: @unchecked Sendable {
         try db.run("DELETE FROM meta_columns WHERE sheet_id=?", [.int(id)])
         try db.run("DELETE FROM meta_reports WHERE sheet_id=?", [.int(id)])
         try db.run("DELETE FROM meta_saved_queries WHERE sheet_id=?", [.int(id)])
+        try db.run("DELETE FROM meta_preparations WHERE sheet_id=?", [.int(id)])
         try db.run("DELETE FROM meta_sheets WHERE id=?", [.int(id)])
         // No synchronous VACUUM: deleted pages are reused by future imports.
     }

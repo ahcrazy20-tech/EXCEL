@@ -15,7 +15,7 @@ enum L10n {
     static var language: AppLanguage = .ar
 
     static func t(_ key: String) -> String {
-        guard let pair = table[key] else { return key }
+        guard let pair = table[key] ?? PreparationLocalization.table[key] else { return key }
         return language == .ar ? pair.1 : pair.0
     }
 

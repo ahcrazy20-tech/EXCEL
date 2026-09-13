@@ -160,3 +160,7 @@ Sources/
 - ألوان التعبئة تُعرض داخل التطبيق وتُصدَّر مع HTML/PDF (خيار الجدول الملون)، ولا تُصدَّر حاليًا مع XLSX.
 - تعبئة اللون الأبيض الخالص تُهمل أثناء الاستيراد (لا تختلف بصريًا عن عدم التعبئة وتوفر تخزينًا كبيرًا).
 - تصدير XLSX/JSON محدود بعدد صفوف (افتراضي 100 ألف) لحماية الذاكرة؛ CSV بلا حد.
+
+## Data preparation — 1.2.0
+
+Cross-sheet joins, strict lookups, ordered cleaning with undo/redo, full-result diagnostics, and independent derived sheets with saved recipes. Imported data stays unchanged. [Usage, limits, safety, and validation](docs/RELEASE_1.2.0.md).

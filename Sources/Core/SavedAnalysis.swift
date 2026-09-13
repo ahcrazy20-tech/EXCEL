@@ -1,6 +1,6 @@
 import Foundation
 
-struct AnalysisColumnSignature: Codable, Equatable {
+struct AnalysisColumnSignature: Codable, Hashable {
     let index: Int
     let name: String
     let kind: ColumnKind

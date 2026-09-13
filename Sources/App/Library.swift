@@ -18,7 +18,8 @@ final class Library: ObservableObject {
     @Published var workbooks: [WorkbookInfo] = []
     @Published var importing = false
     @Published private(set) var deleting = false
-    var storageBusy: Bool { importing || deleting }
+    @Published private(set) var publishing = false
+    var storageBusy: Bool { importing || deleting || publishing }
     @Published var progress: ImportProgress?
     @Published var errorMessage: String?
     @Published var reports: [Workspace.StoredReport] = []
@@ -156,6 +157,22 @@ final class Library: ObservableObject {
             try data.write(to: dest)
         }
         return dest
+    }
+
+    func publish(_ preview: PreparationPreview, name: String, duplicates: Bool, invalid: Bool,
+                 cancellation: QueryCancellation) async throws -> WorkbookInfo {
+        guard !storageBusy else { throw DBError.exec("files.storageBusy".loc) }
+        publishing = true
+        catalogueGeneration += 1
+        defer { publishing = false }
+        let path = workspace.db.path
+        let workbook = try await Task.detached(priority: .userInitiated) {
+            try PreparationEngine.publish(preview, name: name, workspacePath: path,
+                approveDuplicates: duplicates, approveInvalid: invalid, cancellation: cancellation)
+        }.value
+        catalogueGeneration += 1
+        workbooks.insert(workbook, at: 0)
+        return workbook
     }
 
     func delete(sheet: SheetInfo) async -> Bool {

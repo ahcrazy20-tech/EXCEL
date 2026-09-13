@@ -208,6 +208,7 @@ struct SheetRow: View {
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text(sheet.name).font(.body.weight(.medium)).lineLimit(1)
+                if sheet.isDerived { Label("prep.derived".loc, systemImage: "link").font(.caption2).foregroundStyle(.tint) }
                 Text("\(ReportBuilder.formatInt(sheet.rowCount)) \("files.rows".loc) × \(sheet.columns.count)")
                     .font(.caption).foregroundStyle(.secondary)
             }

@@ -73,7 +73,7 @@ final class Database: @unchecked Sendable {
         queue.setSpecific(key: queueKey, value: true)
         var h: OpaquePointer?
         let flags = analysisPolicy == nil
-            ? SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+            ? SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_URI
             : SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
         if sqlite3_open_v2(path, &h, flags, nil) != SQLITE_OK {
             let msg = h.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
@@ -151,6 +151,32 @@ final class Database: @unchecked Sendable {
         }
     }
 
+    /// Trusted, isolated preparation work only. Does not change AI authorization.
+    func withPreparationBudget<T>(_ budget: PreparationBudget, _ work: () throws -> T) throws -> T {
+        try synchronized {
+            guard analysisPolicy == nil else { throw AnalysisError.readOnly }
+            try budget.check()
+            let pointer = Unmanaged.passUnretained(budget).toOpaque()
+            sqlite3_progress_handler(handle, 1000, { pointer in
+                guard let pointer else { return 1 }
+                do { try Unmanaged<PreparationBudget>.fromOpaque(pointer).takeUnretainedValue().check(); return 0 }
+                catch { return 1 }
+            }, pointer)
+            defer { sqlite3_progress_handler(handle, 0, nil, nil) }
+            do { return try work() }
+            catch { try budget.check(); throw error }
+        }
+    }
+
+    func configurePreparation() throws {
+        try synchronized {
+            guard analysisPolicy == nil else { throw AnalysisError.readOnly }
+            try exec("PRAGMA temp_store=FILE; PRAGMA cache_size=-8000; PRAGMA mmap_size=0; PRAGMA busy_timeout=100;")
+            sqlite3_limit(handle, SQLITE_LIMIT_LENGTH, 1_048_576)
+            try PreparationFunctions.install(on: handle)
+        }
+    }
+
     private func clearStatementCache() {
         for statement in stmtCache.values { sqlite3_finalize(statement) }
         stmtCache.removeAll()
@@ -186,10 +212,10 @@ final class Database: @unchecked Sendable {
         try readResult(sql, params, truncate: false).rows
     }
 
-    /// Bounded previews are allowed only on isolated analysis connections. Internal
+    /// Bounded previews support isolated analysis and trusted preparation. Internal
     /// queries throw on overflow instead of silently returning misleading statistics.
     func readResult(_ sql: String, _ params: [DBValue] = [],
-                    limit: Int? = nil, truncate: Bool = true) throws -> ResultTable {
+                    limit: Int? = nil, truncate: Bool = true, maxBytes: Int? = nil) throws -> ResultTable {
         try synchronized {
             try analysisPolicy?.check()
             let stmt = try cachedStmt(sql, params)
@@ -197,7 +223,7 @@ final class Database: @unchecked Sendable {
             let cols = Int(sqlite3_column_count(stmt))
             let names = (0..<cols).map { String(cString: sqlite3_column_name(stmt, Int32($0))) }
             let cap = min(limit ?? Int.max, analysisPolicy?.maxRows ?? Int.max)
-            let byteCap = analysisPolicy?.maxBytes ?? Int.max
+            let byteCap = min(maxBytes ?? Int.max, analysisPolicy?.maxBytes ?? Int.max)
             var bytes = 0
             var rows: [[DBValue]] = []
             var truncated = false
@@ -390,7 +416,7 @@ final class Database: @unchecked Sendable {
             case .null: sqlite3_bind_null(stmt, idx)
             case .int(let v): sqlite3_bind_int64(stmt, idx, v)
             case .double(let v): sqlite3_bind_double(stmt, idx, v)
-            case .text(let s): sqlite3_bind_text(stmt, idx, s, -1, SQLITE_TRANSIENT_HANDLE)
+            case .text(let s): sqlite3_bind_text(stmt, idx, s, Int32(clamping: s.utf8.count), SQLITE_TRANSIENT_HANDLE)
             }
         }
     }
@@ -401,7 +427,9 @@ final class Database: @unchecked Sendable {
         case SQLITE_INTEGER: return .int(sqlite3_column_int64(stmt, i))
         case SQLITE_FLOAT: return .double(sqlite3_column_double(stmt, i))
         default:
-            if let c = sqlite3_column_text(stmt, i) { return .text(String(cString: c)) }
+            if let c = sqlite3_column_text(stmt, i) {
+                return .text(String(decoding: UnsafeBufferPointer(start: c, count: Int(sqlite3_column_bytes(stmt, i))), as: UTF8.self))
+            }
             return .null
         }
     }

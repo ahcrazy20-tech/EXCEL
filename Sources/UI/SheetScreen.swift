@@ -13,6 +13,7 @@ struct SheetScreen: View {
     @State private var showFilters = false
     @State private var showColumns = false
     @State private var showAsk = false
+    @State private var preparationMode: PreparationMode?
     @State private var showCharts = false
     @State private var showOverview = false
     @State private var showSavedAnalyses = false
@@ -69,6 +70,10 @@ struct SheetScreen: View {
         }
         .fullScreenCover(isPresented: $showAsk) {
             AskView(vm: vm)
+        }
+        .fullScreenCover(item: $preparationMode) { mode in
+            if mode == .history { PreparationHistoryView(sheet: sheet) }
+            else { PreparationView(sheet: sheet, mode: mode) }
         }
         .sheet(isPresented: $showCharts) {
             ChartsView(vm: vm)
@@ -180,6 +185,12 @@ struct SheetScreen: View {
                 Image(systemName: "sparkles")
             }
             Menu {
+                Button { preparationMode = .clean } label: { Label("prep.clean".loc, systemImage: "wand.and.stars") }
+                    .disabled(library.storageBusy)
+                Button { preparationMode = .join } label: { Label("prep.join".loc, systemImage: "link") }
+                    .disabled(library.storageBusy)
+                Button { preparationMode = .history } label: { Label("prep.history".loc, systemImage: "clock.arrow.circlepath") }
+                Divider()
                 Button { showOverview = true } label: { Label("overview.title".loc, systemImage: "rectangle.3.group") }
                 Button { showSavedAnalyses = true } label: { Label("analysis.saved".loc, systemImage: "bookmark") }
                 Divider()

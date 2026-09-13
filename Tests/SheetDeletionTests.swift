@@ -83,6 +83,7 @@ final class SheetDeletionTests: XCTestCase {
         XCTAssertThrowsError(try fixture.db.query("SELECT * FROM data_\(keep)"))
     }
 
+    #if canImport(UIKit)
     @MainActor
     func testLayoutCleanupDoesNotRemoveOtherSheetsPreferences() throws {
         let name = "SheetDeletionTests.\(UUID().uuidString)"
@@ -94,4 +95,5 @@ final class SheetDeletionTests: XCTestCase {
         XCTAssertNil(remaining["1"])
         XCTAssertNotNil(remaining["2"])
     }
+    #endif
 }

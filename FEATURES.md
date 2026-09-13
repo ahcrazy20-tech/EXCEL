@@ -72,3 +72,7 @@
 - دليل FTS5 الكامل: mako.ai/guides/sqlite/full-text-search
 - List مقابل LazyVStack (إعادة استخدام الخلايا): strv.com/blog/swiftui-list-vs-lazyvstack
 - مقارنة برامج الجداول 2026 (Pivot/تنسيق شرطي/XLOOKUP): guideflow.com/blog/spreadsheet-software-tools • zapier.com/blog/best-spreadsheet-excel-alternative • lifewire.com/best-spreadsheet-apps-for-android-4178793
+
+## Data preparation — 1.2.0
+
+Cross-sheet joins, strict lookups, ordered cleaning with undo/redo, full-result diagnostics, and independent derived sheets with saved recipes. Imported data stays unchanged. [Usage, limits, safety, and validation](docs/RELEASE_1.2.0.md).
