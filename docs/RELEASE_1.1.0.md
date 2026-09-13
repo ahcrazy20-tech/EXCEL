@@ -59,3 +59,11 @@ Ask and Data Overview use an isolated, read-only SQLite connection per job. Canc
 Tests cover secure settings; provider/model parsing and transport; SQL isolation; multiple statements; dangerous functions; result-size limits; SQLite step errors; timeout/cancellation; saved-plan persistence and replay; schema mismatch; invalid AI plans; duplicate filtering; median semantics; and exact/filtered/sampled/empty overviews.
 
 The active GitHub Actions workflow generates the Xcode project, builds the unsigned device application and packages `SheetX-unsigned.ipa`. The expanded `ci/build-ipa.yml` template additionally runs unit/UI tests; installing that workflow requires GitHub workflow-edit permission, which the current connection does not have. Tests can also run manually with the Xcode scheme. Consult the specific build run's status before installing. A physical iOS 16.4 / TrollStore upgrade test is still required to confirm on-device Keychain behavior, the original freeze report and large-file performance.
+
+## Validation during implementation
+
+- Static Swift syntax, localization key references, YAML and whitespace checks passed.
+- Portable SQLite 3.40.1 smoke checks passed for the SQL alias/literal behavior, eight denied SQL operations, the numeric overview SQL extracted from source, a VM execution deadline and isolation from the writer connection. These are not a substitute for iOS XCTest.
+- The first real device-SDK build exposed inherited compile errors in Settings color bindings and Pivot layout/heatmap code; those were corrected, along with a captured export setting accessed from a background task.
+- The Release iPhoneOS build and unsigned IPA packaging succeeded on GitHub Actions after those fixes.
+- Xcode unit/UI tests remain pending until run on macOS or the expanded CI template is installed. The current workflow packages the device app but does not run those tests.

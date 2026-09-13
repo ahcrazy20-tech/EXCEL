@@ -264,7 +264,7 @@ struct AskView: View {
         let sheet = vm.sheet
         let path = vm.engine.db.path
         let arabic = settings.language == .ar
-        let savedPlan = replayPlan
+        let savedPlan = text == recipe?.command ? replayPlan : nil
         let ai: AIRouter? = (savedPlan == nil && settings.hasAI && useAI) ? settings.aiRouter : nil
         let narrate = includeNarrative
 

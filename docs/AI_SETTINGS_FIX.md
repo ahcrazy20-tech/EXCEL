@@ -41,7 +41,8 @@ Additional issues found: a hard 40-model display cap, duplicate IDs accepted fro
 - `git diff --check`: passed.
 - Project and workflow YAML parsing: passed.
 - Tree-sitter syntax inspection: changed/new AI implementation and test files parse; the parser has existing limitations in `AskView.swift` / `SettingsView.swift` also present in the baseline. This is **not** Swift compiler/type-check validation.
-- XCTest, simulator UI tests, unsigned IPA build and device hang profiling: **not run here** (Linux; no Apple SDK/toolchain). The tests are added and wired, not claimed as passing.
+- The unsigned iPhoneOS Release build and IPA packaging were subsequently verified through GitHub Actions during the 1.1.0 update.
+- XCTest, simulator UI tests and device hang profiling: **not run**. The tests are added and the `ci/` template is ready, but they are not claimed as passing.
 
 ### Run on macOS
 
