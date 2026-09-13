@@ -8,7 +8,7 @@ Open the new **Dashboards** tab and choose a sheet, or open a sheet → **⋯ �
 
 - One saved dashboard per sheet, including derived sheets from joins/cleaning.
 - Up to **12 editable/reorderable cards**: KPI, bar chart, ordered line chart, and bounded source-row table.
-- KPI calculations: row count, sum, average, minimum, maximum, distinct count. Numeric calculations include stored numbers only; invalid text is ignored, never treated as zero. Convert numeric text with Clean data first. No numeric result is shown as a dash, not a fabricated zero.
+- KPI calculations: row count, sum, average, minimum, maximum, distinct count. Numeric calculations include stored numbers only; invalid text is ignored, never treated as zero. Convert numeric text with Clean data first. No numeric result is shown as a dash, not a fabricated zero. Non-finite values or overflowing calculations refuse the refresh rather than display misleading KPIs.
 - Every card shares search/filters and one consistent source snapshot. The initial draft can use the open grid's filters/search; an existing saved dashboard restores its saved filters instead.
 - Tap a bar/point or **Select group / inspect values** to apply an additional exact, type-aware group filter to **every** card. This filter is ANDed outside the ordinary filter group, even when that group uses Match any. NULL, empty text, numeric keys and textual IDs remain distinct. Clear the group filter to return.
 - Bar charts show the highest 12 groups. Lines show the first 24 groups ordered by source value. Lines are equally spaced categories, not continuous-time plots; missing dates are not inserted, and null numeric points are omitted. ISO dates give chronological text order.
@@ -27,7 +27,7 @@ Several independent faults have been corrected:
 2. **Invisible alpha:** some XLSX generators write `00RRGGBB`; spreadsheet fills are now treated as opaque, including already-stored fill payloads when decoded for display.
 3. **Indexed palette:** corrected the legacy 64-entry palette and primary-color positions.
 4. **Tints:** apply tint to HLS luminance rather than independently tinting RGB channels.
-5. **White fills and dark mode:** explicit white is preserved. Bright fills use black text instead of theme-dependent primary text; dark fills use white.
+5. **White fills and dark mode:** explicit white is preserved. Bright fills use black text instead of theme-dependent primary text; dark fills use white, selected using relative-luminance contrast rather than the current light/dark theme.
 6. **Colored headers:** the detected header's fill is stored separately at side-table rowid 0 and displayed on column headers. Data rowids remain unchanged; report-title rows above the header are not displayed.
 7. **Inherited direct styles:** row/column fills apply to used cells, with explicit cell styles taking precedence. Sparse cells within a used row can inherit fills.
 8. **Blank-row leakage:** skipped blank styled rows cannot color the next data row.
@@ -47,7 +47,15 @@ Several independent faults have been corrected:
 
 The existing native macOS host test gate now also compiles the unchanged Foundation XML/color parsers, color storage, and dashboard engine. It needs no third-party packages for these tests. Tests exercise namespace themes, opaque fills, indexed/tinted/white colors, inheritance, blank-row isolation, header/data mapping, filtered row alignment, linked filters, numeric handling, limits, persistence, rollback, schema errors, cancellation and source deletion.
 
-Native test/build results are pending the release build. Static checks do not substitute for simulator/device testing.
+### Verified release results — 2026-09-13
+
+- [Build 34764289161](https://github.com/ahcrazy20-tech/EXCEL/actions/runs/34764289161), source commit `4dbda1f7996167caf3461332b1ef242c2aa632ab`, Xcode 16.2.
+- **82 native macOS-host XCTest cases passed, zero failures**, including **12 color tests** and **13 dashboard tests**, plus all 57 previously gated core tests.
+- The new overflow regression caught SQLite returning NULL (rather than infinity) for an overflowing floating-point sum. Dashboard numeric results now check numeric-input counts to distinguish that failure from genuinely empty numeric input.
+- **Unsigned iOS Release build, packaging and upload passed**; job duration 1m 50s.
+- [Download SheetX 1.3.0](https://github.com/ahcrazy20-tech/EXCEL/actions/runs/34764289161/artifacts/10319803891): `SheetX-unsigned-ipa`, 4,779,852 bytes. Extract the ZIP and install `SheetX-unsigned.ipa` with TrollStore over the existing app—do not delete SheetX first.
+- Static Swift syntax checks (known baseline SettingsView parser limitation excluded), localization-key checks, version/plist/YAML consistency and `git diff --check` passed.
+- No simulator/UI/device verification is claimed. The 19 unit-test methods outside the host subset and the iOS UI tests were not run. No user-supplied workbook was available to verify its particular formatting.
 
 ### Device acceptance checklist
 

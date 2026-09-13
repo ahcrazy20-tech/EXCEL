@@ -1,6 +1,8 @@
 # Powerful next features for SheetX
 
-> **1.2.0 status:** Cross-sheet joins/strict lookups and reversible cleaning recipes are implemented. [Release guide, limits, and verified tests](RELEASE_1.2.0.md). Dashboards remain a later phase.
+> **1.3.0 status:** Linked KPI/bar/line/table dashboards now ship, with one saved configuration per sheet. [Release guide](RELEASE_1.3.0.md). Dashboard pivots, saved-analysis pinning, PDF export and multi-board layouts remain future work.
+
+> **1.2.0 status:** Cross-sheet joins/strict lookups and reversible cleaning recipes are implemented. [Release guide, limits, and verified tests](RELEASE_1.2.0.md). The first dashboard release is now available in 1.3.0.
 
 These are **proposals**, not features claimed as shipped. SheetX already has local import, filtering, pivots, basic charts, AI/offline questions, Saved Analyses and Data Overview. The best next investments should build on them, not repeat them.
 
