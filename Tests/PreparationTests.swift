@@ -134,7 +134,7 @@ final class PreparationTests: XCTestCase {
         XCTAssertEqual(CleanValueRules.number(.text("۱٬۲۳۴٫۵۶"), convention: .arabic), .double(1234.56))
         XCTAssertEqual(CleanValueRules.number(.text("9223372036854775807"), convention: .dotDecimal), .int(Int64.max))
         XCTAssertEqual(CleanValueRules.number(.text("1.25e2"), convention: .dotDecimal), .double(125))
-        for text in ["1,23", "1.234,56", "12,34,567", "1 234", "NaN", "1e999", "oops", "9223372036854775808", "1.234567890123456"] {
+        for text in ["1,23", "1.234,56", "12,34,567", "1 234", "NaN", "1e999", "1e-999", "oops", "9223372036854775808", "1.234567890123456"] {
             XCTAssertNil(CleanValueRules.number(.text(text), convention: .dotDecimal), text)
         }
     }

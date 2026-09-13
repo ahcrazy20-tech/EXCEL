@@ -223,6 +223,7 @@ final class Library: ObservableObject {
     }
 
     func saveReport(sheetID: Int64, title: String, body: String) {
+        guard !publishing else { errorMessage = "files.storageBusy".loc; return }
         do {
             try workspace.saveReport(sheetID: sheetID, title: title, body: body)
             reload()
@@ -230,6 +231,7 @@ final class Library: ObservableObject {
     }
 
     func deleteReport(_ id: Int64) {
+        guard !publishing else { errorMessage = "files.storageBusy".loc; return }
         try? workspace.deleteReport(id)
         reload()
     }

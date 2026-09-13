@@ -49,7 +49,8 @@ enum CleanValueRules {
             }
             let mantissa = canonical.lowercased().split(separator: "e").first ?? ""
             let significant = mantissa.filter(\.isNumber).drop(while: { $0 == "0" }).count
-            guard significant <= 15, let number = Double(canonical), number.isFinite else { return nil }
+            guard significant <= 15, let number = Double(canonical), number.isFinite,
+                  number != 0 || significant == 0 else { return nil }
             return .double(number)
         }
     }
@@ -73,6 +74,7 @@ final class PreparationFunctions {
     func date(_ value: DBValue, format: PreparationDateFormat) -> DBValue? {
         guard case .text(let raw) = value else { return nil }
         let text = CleanValueRules.digits(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count == 10 else { return nil }
         let reader: DateFormatter
         if let cached = dateReaders[format] { reader = cached }
         else { reader = Self.formatter(format.rawValue); dateReaders[format] = reader }
@@ -112,10 +114,10 @@ final class PreparationFunctions {
             { context, count, arguments in
                 guard let context, count == 4, let arguments, let user = sqlite3_user_data(context) else { return }
                 let functions = Unmanaged<PreparationFunctions>.fromOpaque(user).takeUnretainedValue()
-                let value = read(arguments[0])
-                let operation = read(arguments[1]).stringValue
-                let first = read(arguments[2]).stringValue, second = read(arguments[3]).stringValue
-                write(functions.apply(value, operation: operation, first: first, second: second), to: context)
+                let value = PreparationFunctions.read(arguments[0])
+                let operation = PreparationFunctions.read(arguments[1]).stringValue
+                let first = PreparationFunctions.read(arguments[2]).stringValue, second = PreparationFunctions.read(arguments[3]).stringValue
+                PreparationFunctions.write(functions.apply(value, operation: operation, first: first, second: second), to: context)
             }, nil, nil, { pointer in
                 if let pointer { Unmanaged<PreparationFunctions>.fromOpaque(pointer).release() }
             })
