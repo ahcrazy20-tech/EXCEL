@@ -49,8 +49,8 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("settings.importColors".loc, isOn: $settings.importColors)
-                    Toggle("settings.showColors".loc, isOn: $settings.showColors)
+                    Toggle("settings.importColors".loc, isOn: $settings.importCellColors)
+                    Toggle("settings.showColors".loc, isOn: $settings.showCellColors)
                 } header: {
                     Text("settings.cellColors".loc)
                 } footer: {

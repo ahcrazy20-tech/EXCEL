@@ -139,7 +139,6 @@ struct DataGridView: View {
         }
     }
 
-    @ViewBuilder
     private func cell(values: [DBValue], col: ColumnInfo, fills: [Int: UInt32]?) -> some View {
         // values[0] is the rowid
         let value = col.index + 1 < values.count ? values[col.index + 1] : DBValue.null
