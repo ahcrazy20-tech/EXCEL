@@ -175,6 +175,14 @@ final class Library: ObservableObject {
         return workbook
     }
 
+    func saveDashboard(_ recipe: DashboardRecipe, sheet: SheetInfo) async throws {
+        guard !storageBusy else { throw DBError.exec("files.storageBusy".loc) }
+        publishing = true
+        defer { publishing = false }
+        let workspace = self.workspace
+        try await Task.detached(priority: .userInitiated) { try workspace.saveDashboard(recipe, sheet: sheet) }.value
+    }
+
     func delete(sheet: SheetInfo) async -> Bool {
         let workspace = self.workspace
         return await removeSheets { try workspace.deleteSheet(sheet.id, workbookID: sheet.workbookID) }

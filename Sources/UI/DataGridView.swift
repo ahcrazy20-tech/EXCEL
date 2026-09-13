@@ -73,7 +73,7 @@ struct DataGridView: View {
                     HStack(spacing: 4) {
                         Image(systemName: col.kind.symbol)
                             .font(.system(size: fontSize - 3))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(headerText(col).opacity(0.8))
                         Text(col.name)
                             .font(.system(size: fontSize, weight: .semibold))
                             .lineLimit(1)
@@ -94,10 +94,21 @@ struct DataGridView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .background(Color.accentColor.opacity(0.10))
+                .foregroundStyle(headerText(col))
+                .background(headerFill(col) ?? Color.accentColor.opacity(0.10))
                 .overlay(Rectangle().frame(width: 0.5).foregroundStyle(Color(uiColor: .separator)), alignment: .trailing)
             }
         }
+    }
+
+    private func headerFill(_ column: ColumnInfo) -> Color? {
+        guard vm.colorsEnabled, let argb = vm.headerFills[column.index] else { return nil }
+        return Color(argb: argb)
+    }
+
+    private func headerText(_ column: ColumnInfo) -> Color {
+        guard let fill = headerFill(column) else { return .primary }
+        return fill.luminance < 0.55 ? .white : .black
     }
 
     // MARK: Rows
@@ -146,7 +157,7 @@ struct DataGridView: View {
         let fillColor = fills?[col.index].map { Color(argb: $0) }
         let textColor: Color = {
             guard let fillColor else { return .primary }
-            return fillColor.luminance < 0.55 ? .white : .primary
+            return fillColor.luminance < 0.55 ? .white : .black
         }()
         return Text(display(value, kind: col.kind))
             .font(.system(size: fontSize, design: numeric ? .monospaced : .default))

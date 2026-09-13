@@ -1,6 +1,4 @@
 import Foundation
-import SwiftUI
-import UIKit
 
 // MARK: - XLSX colour resolution
 
@@ -9,15 +7,18 @@ import UIKit
 enum XLSXColor {
     /// Legacy 64-colour indexed palette (ECMA-376 §18.8.27), opaque.
     static let indexedPalette: [UInt32] = [
-        0xFF000000, 0xFFFFFFFF, 0xFF0000FF, 0xFF00FF00, 0xFFFF0000, 0xFF00FFFF, 0xFFFF00FF, 0xFF000000,
-        0xFFFFFFFF, 0xFF000000, 0xFFFFFF00, 0xFF00FF00, 0xFF00FFFF, 0xFF0000FF, 0xFFFF00FF, 0xFFFFFFFF,
+        0xFF000000, 0xFFFFFFFF, 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFF00, 0xFFFF00FF, 0xFF00FFFF,
+        0xFF000000, 0xFFFFFFFF, 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFF00, 0xFFFF00FF, 0xFF00FFFF,
         0xFF800000, 0xFF008000, 0xFF000080, 0xFF808000, 0xFF800080, 0xFF008080, 0xFFC0C0C0, 0xFF808080,
         0xFF9999FF, 0xFF993366, 0xFFFFFFCC, 0xFFCCFFFF, 0xFF660066, 0xFFFF8080, 0xFF0066CC, 0xFFCCCCFF,
         0xFF000080, 0xFFFF00FF, 0xFFFFFF00, 0xFF00FFFF, 0xFF800080, 0xFF800000, 0xFF008080, 0xFF0000FF,
         0xFF00CCFF, 0xFFCCFFFF, 0xFFCCFFCC, 0xFFFFFF99, 0xFF99CCFF, 0xFFFF99CC, 0xFFCC99FF, 0xFFFFCC99,
-        0xFF3366FF, 0xFF33CCCC, 0xFF99CC00, 0xFFFF9900, 0xFFFF6600, 0xFF666699, 0xFF969696, 0xFF003366,
-        0xFF339966, 0xFF003300, 0xFF333300, 0xFF993300, 0xFF993366, 0xFF333399, 0xFF333333
+        0xFF3366FF, 0xFF33CCCC, 0xFF99CC00, 0xFFFFCC00, 0xFFFF9900, 0xFFFF6600, 0xFF666699, 0xFF969696,
+        0xFF003366, 0xFF339966, 0xFF003300, 0xFF333300, 0xFF993300, 0xFF993366, 0xFF333399, 0xFF333333,
     ]
+
+    static let defaultTheme: [UInt32] = [0xFFFFFFFF, 0xFF000000, 0xFFEEECE1, 0xFF1F497D,
+        0xFF4F81BD, 0xFFC0504D, 0xFF9BBB59, 0xFF8064A2, 0xFF4BACC6, 0xFFF79646, 0xFF0000FF, 0xFF800080]
 
     /// `rgb` may be `RRGGBB` or `AARRGGBB`.
     static func parseHex(_ s: String) -> UInt32? {
@@ -39,21 +40,40 @@ enum XLSXColor {
         if let b = base, let tint = attrs["tint"].flatMap({ Double($0) }), tint != 0 {
             return applyTint(b, tint)
         }
-        return base
+        // Spreadsheet fills are opaque; many generators encode RGB with alpha 00.
+        return base.map { $0 | 0xFF000000 }
     }
 
-    /// OOXML tint approximation (same formula POI uses): tint < 0 darkens, > 0 lightens.
+    /// OOXML tint changes HLS luminance, not the individual RGB channels.
     static func applyTint(_ argb: UInt32, _ tint: Double) -> UInt32 {
-        let t = max(-1, min(1, tint))
-        func channel(_ v: UInt32) -> UInt32 {
-            let c = Double(v)
-            let out = t < 0 ? c * (1 + t) : c * (1 - t) + 255 * t
-            return UInt32(max(0, min(255, out.rounded())))
+        guard tint.isFinite else { return argb | 0xFF000000 }
+        let r = Double((argb >> 16) & 255) / 255, g = Double((argb >> 8) & 255) / 255, b = Double(argb & 255) / 255
+        let hi = max(r, g, b), lo = min(r, g, b), delta = hi - lo
+        let light = (hi + lo) / 2
+        let saturation = delta == 0 ? 0 : delta / (1 - abs(2 * light - 1))
+        var hue = 0.0
+        if delta != 0 {
+            if hi == r { hue = ((g - b) / delta).truncatingRemainder(dividingBy: 6) }
+            else if hi == g { hue = (b - r) / delta + 2 }
+            else { hue = (r - g) / delta + 4 }
+            hue /= 6
+            if hue < 0 { hue += 1 }
         }
-        let r = channel((argb >> 16) & 0xFF)
-        let g = channel((argb >> 8) & 0xFF)
-        let b = channel(argb & 0xFF)
-        return 0xFF00_0000 | (r << 16) | (g << 8) | b
+        let t = max(-1, min(1, tint))
+        let l = t < 0 ? light * (1 + t) : light * (1 - t) + t
+        let c = (1 - abs(2 * l - 1)) * saturation
+        let x = c * (1 - abs((hue * 6).truncatingRemainder(dividingBy: 2) - 1)), m = l - c / 2
+        let rgb: (Double, Double, Double)
+        switch hue * 6 {
+        case ..<1: rgb = (c, x, 0)
+        case ..<2: rgb = (x, c, 0)
+        case ..<3: rgb = (0, c, x)
+        case ..<4: rgb = (0, x, c)
+        case ..<5: rgb = (x, 0, c)
+        default: rgb = (c, 0, x)
+        }
+        func byte(_ value: Double) -> UInt32 { UInt32(max(0, min(255, ((value + m) * 255).rounded()))) }
+        return 0xFF000000 | byte(rgb.0) << 16 | byte(rgb.1) << 8 | byte(rgb.2)
     }
 
     /// Maps a `clrScheme` colour list (file order: dk1 lt1 dk2 lt2 accent1-6 hlink folHlink)
@@ -74,6 +94,7 @@ final class ThemeParser: NSObject, XMLParserDelegate {
 
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?,
                 qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+        let elementName = elementName.split(separator: ":").last.map(String.init) ?? elementName
         if elementName == "clrScheme" { inScheme = true; scheme = [] }
         guard inScheme else { return }
         switch elementName {
@@ -91,6 +112,7 @@ final class ThemeParser: NSObject, XMLParserDelegate {
     }
 
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+        let elementName = elementName.split(separator: ":").last.map(String.init) ?? elementName
         guard inScheme else { return }
         switch elementName {
         case "dk1", "lt1", "dk2", "lt2",
@@ -114,21 +136,21 @@ final class FillSpool {
     private var handle: FileHandle?
     private(set) var count = 0
 
-    init(directory: URL) {
+    init(directory: URL) throws {
         url = directory.appendingPathComponent("fills-\(UUID().uuidString).spool")
-        FileManager.default.createFile(atPath: url.path, contents: nil)
-        handle = FileHandle(forWritingAtPath: url.path)
+        guard FileManager.default.createFile(atPath: url.path, contents: nil) else { throw ImportError.corrupt("cannot create color spool") }
+        handle = try FileHandle(forWritingTo: url)
     }
 
     /// Line format: `rowSeq;colIndex:argbHex;colIndex:argbHex…`
-    func append(seq: Int, fills: [Int: UInt32]) {
-        guard let handle else { return }
+    func append(seq: Int, fills: [Int: UInt32]) throws {
+        guard let handle else { throw ImportError.corrupt("color spool is closed") }
         var line = "\(seq)"
         for (col, argb) in fills.sorted(by: { $0.key < $1.key }) {
             line += ";\(col):\(String(format: "%08X", argb))"
         }
         line += "\n"
-        handle.write(line.data(using: .utf8)!)
+        try handle.write(contentsOf: Data(line.utf8))
         count += 1
     }
 
@@ -152,7 +174,9 @@ final class FillSpoolReader {
         handle = try FileHandle(forReadingFrom: url)
     }
 
-    func nextLine() -> String? {
+    deinit { try? handle.close() }
+
+    func nextLine() throws -> String? {
         while true {
             if let nl = pending.firstIndex(of: "\n") {
                 let line = String(pending[..<nl])
@@ -160,7 +184,7 @@ final class FillSpoolReader {
                 if !line.isEmpty { return line }
                 continue
             }
-            guard let chunk = try? handle.read(upToCount: 1 << 20), !chunk.isEmpty else {
+            guard let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty else {
                 try? handle.close()
                 guard !pending.isEmpty else { return nil }
                 let last = pending
@@ -182,27 +206,45 @@ enum FillCodec {
         for pair in s.split(separator: ";") {
             let parts = pair.split(separator: ":", maxSplits: 1)
             guard parts.count == 2, let col = Int(parts[0]), let argb = UInt32(parts[1], radix: 16) else { continue }
-            out[col] = argb
+            out[col] = argb | 0xFF000000
         }
         return out
     }
 }
 
-// MARK: - SwiftUI colour helpers
 
-extension Color {
-    init(argb: UInt32) {
-        let a = Double((argb >> 24) & 0xFF) / 255.0
-        let r = Double((argb >> 16) & 0xFF) / 255.0
-        let g = Double((argb >> 8) & 0xFF) / 255.0
-        let b = Double(argb & 0xFF) / 255.0
-        self.init(.sRGB, red: r, green: g, blue: b, opacity: a)
+enum SheetFillStorage {
+    /// Loads the spooled per-row fill colours into a compact side table `data_N_f`.
+    static func importSpool(workspace: Workspace, sheetID: Int64, tableName: String, spool: FillSpool, dropped: Int,
+                                  name: String, cancelled: () -> Bool = { false }, progress: @escaping (ImportProgress) -> Void) throws {
+        guard !cancelled() else { throw ImportError.cancelled }
+        guard spool.count > 0 else { return }
+        spool.close()
+        progress(ImportProgress(stage: "importing colors (\(name))", fraction: -1, rowsDone: 0, sheetName: name))
+
+        let fTable = (tableName + "_f").sqlIdentifier
+        try workspace.db.exec("DROP TABLE IF EXISTS \(fTable);")
+        try workspace.db.exec("CREATE TABLE \(fTable)(rowid INTEGER PRIMARY KEY, f TEXT NOT NULL);")
+
+        let reader = try FillSpoolReader(url: spool.url)
+        var done = 0
+        try workspace.db.bulkInsert(sql: "INSERT INTO \(fTable)(rowid,f) VALUES(?,?)") {
+            while let line = try reader.nextLine() {
+                guard let semi = line.firstIndex(of: ";"),
+                      let seq = Int(line[..<semi]) else { continue }
+                let rowid = seq - dropped
+                guard rowid >= 0 else { continue }   // rowid 0 stores the detected header fill; titles above it are omitted
+                if done % 1024 == 0 && cancelled() { throw ImportError.cancelled }
+                done += 1
+                if done % 100_000 == 0 {
+                    progress(ImportProgress(stage: "importing colors (\(name))", fraction: -1,
+                                            rowsDone: done, sheetName: name))
+                }
+                return [.int(Int64(rowid)), .text(String(line[line.index(after: semi)...]))]
+            }
+            return nil
+        }
+        try workspace.setHasColors(sheetID: sheetID, done > 0)
     }
 
-    /// Perceived brightness 0…1 (used to pick readable text colour over fills).
-    var luminance: Double {
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        UIColor(self).getRed(&r, green: &g, blue: &b, alpha: &a)
-        return 0.299 * Double(r) + 0.587 * Double(g) + 0.114 * Double(b)
-    }
 }

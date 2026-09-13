@@ -12,6 +12,7 @@ final class SheetViewModel: ObservableObject {
     @Published var loadedPages: [Int: [[DBValue]]] = [:]   // page -> rows (first element is rowid)
     /// page -> row offset within page -> (column index -> fill ARGB)
     @Published var pageFills: [Int: [Int: [Int: UInt32]]] = [:]
+    @Published var headerFills: [Int: UInt32] = [:]
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var hiddenColumns: Set<Int> = [] {
@@ -78,7 +79,7 @@ final class SheetViewModel: ObservableObject {
 
     /// Fill colours for a row, keyed by column index (nil when the page/row has none).
     func fills(page: Int, offset: Int) -> [Int: UInt32]? {
-        pageFills[page]?[offset]
+        colorsEnabled ? pageFills[page]?[offset] : nil
     }
 
     /// Fetches one page of rows plus its fill colours off the main thread.
@@ -109,17 +110,20 @@ final class SheetViewModel: ObservableObject {
         let gen = generation
         loadedPages.removeAll()
         pageFills.removeAll()
+        headerFills.removeAll()
         loadingPages.removeAll()
         isLoading = true
         let spec = query
         let engine = self.engine
         let colors = colorsEnabled
         Task.detached(priority: .userInitiated) {
+            let header = colors ? FillCodec.decode((try? engine.fetchFills(rowids: [0]))?[0] ?? "") : [:]
             let count = (try? engine.countRows(spec)) ?? 0
             let (rows, pageFill) = SheetViewModel.loadPage(engine: engine, spec: spec,
                                                            offset: 0, limit: 200, colors: colors)
             await MainActor.run {
                 guard gen == self.generation else { return }
+                self.headerFills = header
                 self.totalRows = count
                 self.loadedPages[0] = rows
                 self.pageFills[0] = pageFill

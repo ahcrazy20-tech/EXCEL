@@ -18,7 +18,7 @@ enum DBError: LocalizedError {
 }
 
 /// Value coming back from SQLite.
-enum DBValue: Hashable {
+enum DBValue: Hashable, Codable {
     case null
     case int(Int64)
     case double(Double)

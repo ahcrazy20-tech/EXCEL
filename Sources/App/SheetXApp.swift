@@ -37,6 +37,9 @@ struct RootView: View {
             FilesView()
                 .tabItem { Label("tab.files".loc, systemImage: "tablecells") }
                 .tag(0)
+            DashboardsView()
+                .tabItem { Label("dash.title".loc, systemImage: "rectangle.3.group") }
+                .tag(3)
             ReportsView()
                 .tabItem { Label("tab.reports".loc, systemImage: "doc.text.magnifyingglass") }
                 .tag(1)

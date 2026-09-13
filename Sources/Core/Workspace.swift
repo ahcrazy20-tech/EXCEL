@@ -105,6 +105,9 @@ final class Workspace: @unchecked Sendable {
             body TEXT NOT NULL,
             created_at REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS meta_dashboards(
+            sheet_id INTEGER PRIMARY KEY, title TEXT NOT NULL, payload TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS meta_preparations(
             sheet_id INTEGER PRIMARY KEY, recipe TEXT NOT NULL, summary TEXT NOT NULL, created_at REAL NOT NULL
         );
@@ -244,6 +247,7 @@ final class Workspace: @unchecked Sendable {
         try db.run("DELETE FROM meta_reports WHERE sheet_id=?", [.int(id)])
         try db.run("DELETE FROM meta_saved_queries WHERE sheet_id=?", [.int(id)])
         try db.run("DELETE FROM meta_preparations WHERE sheet_id=?", [.int(id)])
+        try db.run("DELETE FROM meta_dashboards WHERE sheet_id=?", [.int(id)])
         try db.run("DELETE FROM meta_sheets WHERE id=?", [.int(id)])
         // No synchronous VACUUM: deleted pages are reused by future imports.
     }

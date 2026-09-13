@@ -13,6 +13,8 @@ struct SheetScreen: View {
     @State private var showFilters = false
     @State private var showColumns = false
     @State private var showAsk = false
+    @State private var showDashboard = false
+    @State private var showColorHelp = false
     @State private var preparationMode: PreparationMode?
     @State private var showCharts = false
     @State private var showOverview = false
@@ -80,6 +82,11 @@ struct SheetScreen: View {
         }
         .sheet(isPresented: $showOverview) { DataOverviewView(vm: vm) }
         .sheet(isPresented: $showSavedAnalyses) { SavedAnalysesView(vm: vm) }
+        .onChange(of: settings.showCellColors) { _ in vm.refresh() }
+        .fullScreenCover(isPresented: $showDashboard) { DashboardView(sheet: sheet, initialQuery: vm.query) }
+        .alert("colors.title".loc, isPresented: $showColorHelp) {
+            Button("common.ok".loc, role: .cancel) {}
+        } message: { Text("colors.help".loc) }
         .onChange(of: vm.query.search) { value in searchText = value }
         .onChange(of: library.workbooks.flatMap { $0.sheets.map(\.id) }) { ids in
             if !ids.contains(sheet.id) {
@@ -185,6 +192,10 @@ struct SheetScreen: View {
                 Image(systemName: "sparkles")
             }
             Menu {
+                Button { showDashboard = true } label: { Label("dash.title".loc, systemImage: "rectangle.3.group.fill") }
+                Toggle("settings.showColors".loc, isOn: $settings.showCellColors)
+                Button { showColorHelp = true } label: { Label("colors.title".loc, systemImage: "paintpalette") }
+                Divider()
                 Button { preparationMode = .clean } label: { Label("prep.clean".loc, systemImage: "wand.and.stars") }
                     .disabled(library.storageBusy)
                 Button { preparationMode = .join } label: { Label("prep.join".loc, systemImage: "link") }

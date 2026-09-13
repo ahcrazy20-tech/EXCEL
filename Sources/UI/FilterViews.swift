@@ -88,6 +88,7 @@ struct FilterEditorView: View {
 struct FilterRowEditor: View {
     let columns: [ColumnInfo]
     @Binding var filter: FilterCondition
+    var operators: [FilterOperator] = FilterOperator.allCases
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -97,7 +98,7 @@ struct FilterRowEditor: View {
                 }
                 .labelsHidden()
                 Picker("", selection: $filter.op) {
-                    ForEach(FilterOperator.allCases) { op in Text(op.display).tag(op) }
+                    ForEach(operators) { op in Text(op.display).tag(op) }
                 }
                 .labelsHidden()
             }
