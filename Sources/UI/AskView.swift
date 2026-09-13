@@ -16,6 +16,25 @@ struct AskView: View {
     @State private var shareItem: ShareItem?
     @State private var usedProvider: String?
 
+    private let recipe: SavedAnalysisRecipe?
+    @State private var replayPlan: CommandPlan?
+    @State private var runTask: Task<Void, Never>?
+    @State private var runID = UUID()
+    @State private var completedCommand = ""
+    @State private var output: AnalysisOutput?
+    @State private var includeNarrative = false
+    @State private var showSaveAnalysis = false
+    @State private var analysisTitle = ""
+    @State private var savingAnalysis = false
+    @State private var savedNotice = false
+
+    init(vm: SheetViewModel, recipe: SavedAnalysisRecipe? = nil) {
+        self.vm = vm
+        self.recipe = recipe
+        _command = State(initialValue: recipe?.command ?? "")
+        _replayPlan = State(initialValue: recipe?.plan)
+    }
+
     private var suggestions: [String] {
         NLQueryParser.suggestions(for: vm.sheet, arabic: settings.language == .ar)
     }
@@ -25,7 +44,18 @@ struct AskView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     inputCard
-                    if running { HStack { ProgressView(); Text("ask.thinking".loc) }.padding(.horizontal) }
+                    if running {
+                        HStack {
+                            ProgressView()
+                            Text("ask.thinking".loc)
+                            Spacer()
+                            Button("common.cancel".loc) { cancelRun() }
+                        }.padding(.horizontal)
+                    }
+                    if savedNotice {
+                        Label("analysis.savedOK".loc, systemImage: "bookmark.fill")
+                            .font(.caption).foregroundStyle(.green).padding(.horizontal)
+                    }
                     if let errorText {
                         Label(errorText, systemImage: "exclamationmark.triangle")
                             .font(.caption)
@@ -34,7 +64,7 @@ struct AskView: View {
                     }
                     if let plan { planCard(plan) }
                     if let narrative { narrativeCard(narrative) }
-                    if let result, !result.isEmpty { resultCard(result) }
+                    if let result { resultCard(result) }
                     if plan == nil && !running { suggestionCard }
                 }
                 .padding(.vertical, 12)
@@ -45,6 +75,18 @@ struct AskView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("common.close".loc) { dismiss() } }
             }
             .sheet(item: $shareItem) { item in ShareSheet(items: [item.url]) }
+            .alert("analysis.save".loc, isPresented: $showSaveAnalysis) {
+                TextField("analysis.name".loc, text: $analysisTitle)
+                Button("settings.save".loc) { saveAnalysis() }
+                Button("common.cancel".loc, role: .cancel) {}
+            } message: { Text("analysis.saveHint".loc) }
+        }
+        .onDisappear { cancelRun(showMessage: false) }
+        .onChange(of: command) { text in
+            if text != recipe?.command { replayPlan = nil }
+            if text != completedCommand {
+                plan = nil; result = nil; narrative = nil; output = nil; savedNotice = false
+            }
         }
     }
 
@@ -57,6 +99,7 @@ struct AskView: View {
                 .textFieldStyle(.roundedBorder)
                 .submitLabel(.go)
                 .onSubmit(run)
+                .disabled(running || savingAnalysis)
 
             HStack {
                 Picker("", selection: $useAI) {
@@ -65,7 +108,7 @@ struct AskView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 220)
-                .disabled(!settings.hasAI)
+                .disabled(!settings.hasAI || running || replayPlan != nil)
 
                 Spacer()
 
@@ -73,9 +116,14 @@ struct AskView: View {
                     Label("ask.run".loc, systemImage: "play.fill")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(command.trimmingCharacters(in: .whitespaces).isEmpty || running)
+                .disabled(command.trimmingCharacters(in: .whitespaces).isEmpty || running || savingAnalysis)
             }
-            if !settings.hasAI {
+            if replayPlan != nil {
+                Label("analysis.replay".loc, systemImage: "arrow.clockwise")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if useAI {
+                Toggle("analysis.narrate".loc, isOn: $includeNarrative).font(.caption).disabled(running)
                 Text("settings.aiNote".loc).font(.caption2).foregroundStyle(.secondary)
             }
         }
@@ -114,28 +162,38 @@ struct AskView: View {
                     Text("\("ai.usedProvider".loc): \(usedProvider)")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
-                Text("\(Int(plan.confidence * 100))%").font(.caption2).foregroundStyle(.secondary)
+                Text("analysis.localResult".loc).font(.caption2).foregroundStyle(.secondary)
             }
             Text(plan.explanation.isEmpty ? plan.kind.rawValue : plan.explanation)
                 .font(.subheadline)
             if !plan.sql.isEmpty {
                 Text(plan.sql).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(4)
             }
-            HStack {
-                Button {
-                    var q = plan.analysis.query
-                    if plan.kind == .topN { q.sorts = plan.analysis.query.sorts }
-                    vm.apply(query: q)
-                    dismiss()
-                } label: { Label("ask.applyToSheet".loc, systemImage: "arrow.down.doc") }
-                    .font(.caption)
-                    .buttonStyle(.bordered)
-
-                Button {
-                    saveAsReport()
-                } label: { Label("ask.saveResult".loc, systemImage: "square.and.arrow.down") }
-                    .font(.caption)
-                    .buttonStyle(.bordered)
+            if let output {
+                Text("\(vm.sheet.name) · " + String(format: "analysis.elapsed".loc, output.elapsed))
+                    .font(.caption2).foregroundStyle(.secondary)
+                Text(output.completedAt, style: .time).font(.caption2).foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                if plan.kind == .filterRows || plan.kind == .topN {
+                    Button {
+                        vm.apply(query: plan.analysis.query)
+                        dismiss()
+                    } label: { Label("ask.applyToSheet".loc, systemImage: "arrow.down.doc") }
+                        .font(.caption).buttonStyle(.bordered)
+                }
+                HStack {
+                    Button { saveAsReport() } label: {
+                        Label("ask.saveResult".loc, systemImage: "square.and.arrow.down")
+                    }
+                    Button {
+                        analysisTitle = String(completedCommand.prefix(120))
+                        showSaveAnalysis = true
+                    } label: { Label("analysis.save".loc, systemImage: "bookmark") }
+                }
+                .font(.caption).buttonStyle(.bordered)
+                .disabled(running || savingAnalysis)
+                if savingAnalysis { ProgressView("ai.saving".loc) }
             }
         }
         .padding()
@@ -158,12 +216,18 @@ struct AskView: View {
             HStack {
                 Text("ask.result".loc).font(.caption.bold())
                 Spacer()
-                Text("\(table.rows.count) \("ask.rowsShown".loc)").font(.caption2).foregroundStyle(.secondary)
+                Text(String(format: "analysis.previewRows".loc, min(100, table.rows.count), table.rows.count))
+                    .font(.caption2).foregroundStyle(.secondary)
                 Menu {
                     Button("CSV") { export(table, .csv) }
                     Button("XLSX") { export(table, .xlsx) }
                     Button("JSON") { export(table, .json) }
                 } label: { Image(systemName: "square.and.arrow.up").font(.caption) }
+            }
+            if table.isEmpty { Text("sheet.noResults".loc).foregroundStyle(.secondary) }
+            if table.truncated {
+                Label("analysis.truncated".loc, systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
             }
             ResultTableView(table: table)
         }
@@ -174,100 +238,106 @@ struct AskView: View {
 
     // MARK: Actions
 
+    private func cancelRun(showMessage: Bool = true) {
+        runID = UUID()
+        runTask?.cancel()
+        runTask = nil
+        if running && showMessage { errorText = "analysis.cancelled".loc }
+        running = false
+    }
+
     private func run() {
-        let text = command.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
+        let text = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !running, !savingAnalysis else { return }
+        cancelRun(showMessage: false)
+        let id = runID
         running = true
         errorText = nil
         result = nil
         narrative = nil
         plan = nil
+        output = nil
+        savedNotice = false
+        usedProvider = nil
         settings.haptic()
 
-        let engine = vm.engine
         let sheet = vm.sheet
+        let path = vm.engine.db.path
         let arabic = settings.language == .ar
-        let ai: AIRouter? = (settings.hasAI && useAI) ? settings.aiRouter : nil
+        let savedPlan = replayPlan
+        let ai: AIRouter? = (savedPlan == nil && settings.hasAI && useAI) ? settings.aiRouter : nil
+        let narrate = includeNarrative
 
-        Task {
+        runTask = Task { @MainActor in
+            defer { if runID == id { running = false; runTask = nil } }
             do {
-                var computedPlan: CommandPlan
-                if let ai {
-                    let sampleRows = (try? engine.fetchRows(QuerySpec(), offset: 0, limit: 3)) ?? []
-                    let sample = ResultTable(columns: sheet.columns.map { $0.name },
-                                             rows: sampleRows.map { Array($0.dropFirst()) })
-                    computedPlan = try await ai.plan(command: text, sheet: sheet, sample: sample)
+                let computedPlan: CommandPlan
+                if let savedPlan {
+                    try recipe?.validate(for: sheet)
+                    computedPlan = savedPlan
+                } else if let ai {
+                    computedPlan = try await ai.plan(command: text, sheet: sheet)
                 } else {
                     computedPlan = NLQueryParser(sheet: sheet).parse(text)
                 }
+                try Task.checkCancellation()
+                let executed = try await AnalysisRunner.execute(plan: computedPlan, path: path, sheet: sheet, arabic: arabic)
+                try Task.checkCancellation()
+                guard runID == id else { return }
+                plan = computedPlan
+                result = executed.table
+                narrative = executed.report
+                output = executed
+                completedCommand = text
+                usedProvider = ai?.lastUsedProvider?.display
 
-                let executed = try await Self.execute(plan: computedPlan, engine: engine, arabic: arabic)
-
-                await MainActor.run {
-                    plan = computedPlan
-                    result = executed.0
-                    narrative = executed.1
-                    usedProvider = ai?.lastUsedProvider?.display
-                    running = false
-                }
-
-                // Optional AI narration of computed numbers.
-                if let ai, let table = executed.0, !table.isEmpty, computedPlan.kind != .summary {
-                    let builder = ReportBuilder(engine: engine, arabic: arabic)
-                    let ctx = "QUESTION: \(text)\nRESULT TABLE:\n" + builder.markdownTable(table, maxRows: 25)
-                    if let answer = try? await ai.ask(question: text, context: ctx, language: arabic ? "ar" : "en") {
-                        await MainActor.run { narrative = answer }
-                    }
+                if narrate, let ai, let table = executed.table, !table.isEmpty {
+                    let builder = ReportBuilder(engine: vm.engine, arabic: arabic)
+                    let context = "QUESTION: \(text)\nRESULT PREVIEW (may be truncated):\n"
+                        + builder.markdownTable(table, maxRows: 25)
+                    let answer = try await ai.ask(question: text, context: context, language: arabic ? "ar" : "en")
+                    try Task.checkCancellation()
+                    guard runID == id else { return }
+                    narrative = answer
                 }
             } catch {
-                await MainActor.run {
-                    errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                    running = false
-                }
+                guard runID == id, !Task.isCancelled else { return }
+                errorText = error.localizedDescription
             }
         }
     }
 
-    /// Executes a plan and returns (table, narrative markdown).
-    static func execute(plan: CommandPlan, engine: QueryEngine, arabic: Bool) async throws -> (ResultTable?, String?) {
-        try await Task.detached(priority: .userInitiated) { () -> (ResultTable?, String?) in
-            let builder = ReportBuilder(engine: engine, arabic: arabic)
-            switch plan.kind {
-            case .summary:
-                let md = try builder.fullReport(query: plan.analysis.query)
-                return (nil, md)
-            case .duplicates:
-                let table = try engine.duplicateGroups(columns: plan.analysis.groupBy.isEmpty
-                                                       ? [engine.sheet.columns.first?.index ?? 0]
-                                                       : plan.analysis.groupBy,
-                                                       limit: max(20, plan.analysis.limit))
-                return (table, nil)
-            case .aggregate, .chart:
-                let table = try engine.runAnalysis(plan.analysis)
-                return (table, nil)
-            case .sql:
-                let table = try engine.runSQL(plan.sql)
-                return (table, nil)
-            case .topN, .filterRows:
-                var q = plan.analysis.query
-                if plan.kind == .topN { q.sorts = plan.analysis.query.sorts }
-                let limit = max(1, min(plan.analysis.limit, 500))
-                let rows = try engine.fetchRows(q, offset: 0, limit: limit)
-                let table = ResultTable(columns: engine.sheet.columns.map { $0.name },
-                                        rows: rows.map { Array($0.dropFirst()) })
-                return (table, nil)
-            }
-        }.value
+    private func saveAnalysis() {
+        guard let plan, !savingAnalysis else { return }
+        let recipe = SavedAnalysisRecipe(sheet: vm.sheet, command: completedCommand, plan: plan)
+        let sheet = vm.sheet
+        let title = analysisTitle
+        let workspace = Workspace.shared
+        savingAnalysis = true
+        Task { @MainActor in
+            defer { savingAnalysis = false }
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try workspace.saveAnalysis(title: title, recipe: recipe, sheet: sheet)
+                }.value
+                savedNotice = true
+                settings.haptic(.medium)
+            } catch { errorText = error.localizedDescription }
+        }
     }
 
     private func saveAsReport() {
         let arabic = settings.language == .ar
         let builder = ReportBuilder(engine: vm.engine, arabic: arabic)
-        var md = "# \(command)\n\n"
+        var md = "# \(completedCommand)\n\n"
+        md += "\(vm.sheet.name) · \(Date().formatted())\n\n"
         if let plan { md += "_\(plan.explanation)_\n\n" }
         if let narrative { md += narrative + "\n\n" }
-        if let result { md += builder.markdownTable(result, maxRows: 200) }
-        library.saveReport(sheetID: vm.sheet.id, title: command, body: md)
+        if let result {
+            if result.truncated || result.rows.count > 200 { md += "\("analysis.truncated".loc)\n\n" }
+            md += builder.markdownTable(result, maxRows: 200)
+        }
+        library.saveReport(sheetID: vm.sheet.id, title: completedCommand, body: md)
         settings.haptic(.medium)
         dismiss()
     }

@@ -7,3 +7,5 @@ DerivedData/
 .swiftpm/
 Packages/
 *.ipa
+build-tests/
+*.xcresult/

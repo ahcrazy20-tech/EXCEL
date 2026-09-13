@@ -119,8 +119,8 @@ enum L10n {
         "settings.apiKey": ("API key", "مفتاح الـ API"),
         "settings.save": ("Save", "حفظ"),
         "settings.test": ("Test connection", "اختبار الاتصال"),
-        "settings.aiNote": ("Only the column schema and computed statistics are sent — never the raw file.",
-                            "يتم إرسال أسماء الأعمدة والإحصاءات المحسوبة فقط — لا يتم إرسال الملف نفسه أبدًا."),
+        "settings.aiNote": ("AI receives your question and column schema. Narration also sends report or result excerpts, which may contain cell values. Enabled fallback can send this context to another configured provider. Full files are not uploaded.",
+                            "يستقبل الذكاء الاصطناعي سؤالك وأسماء الأعمدة. ويرسل التحليل السردي مقتطفات من التقرير أو النتائج قد تتضمن قيم خلايا. عند تفعيل التبديل التلقائي قد تُرسل هذه المعلومات إلى مزوّد آخر مفعّل. لا تُرفع الملفات كاملة."),
         "settings.grid": ("Grid", "الجدول"),
         "settings.rowHeight": ("Row height", "ارتفاع الصف"),
         "settings.fontSize": ("Font size", "حجم الخط"),
@@ -166,6 +166,66 @@ enum L10n {
         "ai.testOK": ("Connection works", "الاتصال ناجح"),
         "ai.testFail": ("Connection failed", "فشل الاتصال"),
         "ai.makePrimary": ("Set as primary provider", "اجعله المزوّد الأساسي"),
+        "ai.retry": ("Retry", "إعادة المحاولة"),
+        "ai.loadingKeys": ("Loading secure credentials…", "جارٍ تحميل المفاتيح الآمنة…"),
+        "ai.saving": ("Saving securely…", "جارٍ الحفظ الآمن…"),
+        "ai.keychainError": ("Secure storage is unavailable. Unlock your device and retry. If this persists, check the app’s signing and Keychain entitlements.", "التخزين الآمن غير متاح. افتح قفل الجهاز وأعد المحاولة. إذا استمرت المشكلة، تحقق من توقيع التطبيق وصلاحيات Keychain."),
+        "ai.chooseModel": ("Choose a model", "اختر موديلًا"),
+        "ai.searchModels": ("Search all models", "ابحث في كل الموديلات"),
+        "ai.freeOnly": ("Free models only", "الموديلات المجانية فقط"),
+        "ai.selectedModel": ("Selected", "المحدد"),
+        "ai.noModelMatches": ("No matching models. Change the search or enter a model ID on the previous screen.", "لا توجد موديلات مطابقة. غيّر البحث أو أدخل اسم الموديل في الشاشة السابقة."),
+        "ai.modelCount": ("%d of %d models", "%d من %d موديل"),
+        "ai.modelsLoaded": ("%d models loaded. Open Choose a model to search them.", "تم تحميل %d موديل. افتح «اختر موديلًا» للبحث فيها."),
+        "ai.modelsHint": ("Suggestions work offline. Fetch to check current availability; pricing and quotas depend on your account. You can also enter a model ID manually.", "الاقتراحات متاحة بدون إنترنت. اجلب القائمة للتحقق من التوفر الحالي؛ الأسعار والحدود تعتمد على حسابك. يمكنك إدخال اسم الموديل يدويًا."),
+        "ai.noRemoteModels": ("The provider returned no compatible models. Showing suggestions.", "لم يُرجع المزوّد موديلات متوافقة. تُعرض الاقتراحات."),
+        "ai.modelsFailed": ("Could not refresh models. The previous list is still available.", "تعذر تحديث الموديلات. القائمة السابقة ما زالت متاحة."),
+        "ai.cancelRequest": ("Cancel request", "إلغاء الطلب"),
+        "ai.testDraft": ("Tests these fields without saving. A test sends a small request and may incur provider charges.", "يختبر هذه الحقول دون حفظها. يرسل الاختبار طلبًا صغيرًا وقد يترتب عليه رسوم من المزوّد."),
+        "ai.invalidURL": ("Enter a full HTTP or HTTPS API base URL without a query, fragment, username or password.", "أدخل رابط API كاملًا يبدأ بـ HTTP أو HTTPS بدون استعلام أو جزء إضافي أو اسم مستخدم أو كلمة مرور."),
+        "analysis.readOnly": ("Only read-only queries against this sheet are allowed.", "يُسمح باستعلامات القراءة فقط على هذه الورقة."),
+        "analysis.oneStatement": ("Run one SQL statement at a time.", "نفّذ تعليمة SQL واحدة في كل مرة."),
+        "analysis.timedOut": ("This analysis exceeded its 15-second budget. Add filters or simplify the query and retry.", "تجاوز التحليل مهلة 15 ثانية. أضف فلاتر أو بسّط الاستعلام ثم أعد المحاولة."),
+        "analysis.tooLarge": ("The result exceeds the memory budget. Select fewer columns, aggregate, or add filters.", "تجاوزت النتيجة حد الذاكرة. اختر أعمدة أقل أو استخدم التجميع أو أضف فلاتر."),
+        "analysis.invalidPlan": ("This plan contains an invalid column, filter, or unsupported calculation. Refine your question. Grouped medians are not supported yet.", "تحتوي الخطة على عمود أو فلتر غير صالح أو عملية غير مدعومة. وضّح سؤالك. الوسيط حسب المجموعات غير مدعوم بعد."),
+        "analysis.incompatible": ("This saved analysis is incompatible with the current sheet or app version. Recreate it from Ask.", "هذا التحليل المحفوظ غير متوافق مع الورقة أو إصدار التطبيق الحالي. أعد إنشاءه من «اسأل»."),
+        "analysis.cancelled": ("Cancelled. Any completed result is kept.", "تم الإلغاء. تُحفظ أي نتيجة مكتملة."),
+        "analysis.saved": ("Saved Analyses", "التحليلات المحفوظة"),
+        "analysis.savedHint": ("Reusable analyses for this sheet. Open one to review its question, then Run to replay the saved plan locally.", "تحليلات قابلة لإعادة الاستخدام لهذه الورقة. افتح تحليلًا لمراجعة سؤاله ثم اضغط «تنفيذ» لإعادة تشغيل الخطة محليًا."),
+        "analysis.empty": ("Your analysis library starts here", "ابدأ مكتبة تحليلاتك هنا"),
+        "analysis.emptyHint": ("Run a question in Ask, then choose Save analysis. Your filters, grouping and calculations are saved, not just the question.", "نفّذ سؤالًا في «اسأل»، ثم اختر «حفظ التحليل». تُحفظ الفلاتر والتجميعات والحسابات، وليس السؤال فقط."),
+        "analysis.latest": ("Showing the latest 200 saved analyses for this sheet. Rename or delete with a swipe or a long press.", "تُعرض أحدث 200 تحليل محفوظ لهذه الورقة. لإعادة التسمية أو الحذف اسحب العنصر أو اضغط مطولًا."),
+        "analysis.save": ("Save analysis", "حفظ التحليل"),
+        "analysis.name": ("Analysis name (up to 120 characters)", "اسم التحليل (حتى 120 حرفًا)"),
+        "analysis.saveHint": ("Save this exact plan and source schema for offline reuse. This does not copy the source data.", "احفظ هذه الخطة ومخطط المصدر لإعادة الاستخدام دون إنترنت. لا يؤدي ذلك إلى نسخ بيانات المصدر."),
+        "analysis.savedOK": ("Saved in this sheet’s analysis library", "حُفظ في مكتبة تحليلات هذه الورقة"),
+        "analysis.replay": ("Saved plan · runs locally without AI. Edit the question to start a new analysis.", "خطة محفوظة · تعمل محليًا دون ذكاء اصطناعي. عدّل السؤال لبدء تحليل جديد."),
+        "analysis.narrate": ("AI narrative (share result excerpts)", "تحليل سردي بالذكاء الاصطناعي (مشاركة مقتطفات النتائج)"),
+        "analysis.localResult": ("Computed locally", "محسوب محليًا"),
+        "analysis.elapsed": ("Local query: %.2fs", "الاستعلام المحلي: %.2f ثانية"),
+        "analysis.previewRows": ("%d of %d loaded rows", "%d من %d صف محمّل"),
+        "analysis.truncated": ("Limited preview — not the complete result. Export and report contain only the loaded preview. Filter or aggregate for a complete answer.", "معاينة محدودة — ليست النتيجة الكاملة. يتضمن التصدير والتقرير المعاينة المحمّلة فقط. استخدم الفلاتر أو التجميع للحصول على إجابة كاملة."),
+        "overview.title": ("Data Overview", "نظرة عامة على البيانات"),
+        "overview.filtered": ("Scope: current search and filters", "النطاق: البحث والفلاتر الحالية"),
+        "overview.allRows": ("Scope: the entire sheet", "النطاق: الورقة كاملة"),
+        "overview.local": ("On-device analysis. No data is sent to an AI provider.", "تحليل على الجهاز. لا تُرسل أي بيانات إلى مزوّد ذكاء اصطناعي."),
+        "overview.progress": ("Profiling columns: %d of %d", "تحليل الأعمدة: %d من %d"),
+        "overview.refresh": ("Refresh overview", "تحديث النظرة العامة"),
+        "overview.matchingRows": ("Matching rows (exact)", "الصفوف المطابقة (عدد دقيق)"),
+        "overview.profiledRows": ("Rows profiled", "الصفوف المحلّلة"),
+        "overview.completeness": ("Cell completeness", "اكتمال الخلايا"),
+        "overview.sampled": ("Sampled column profiles", "ملفات أعمدة مبنية على عينة"),
+        "overview.exact": ("All matching rows profiled", "تم تحليل جميع الصفوف المطابقة"),
+        "overview.quality": ("Data quality", "جودة البيانات"),
+        "overview.sampleNote": ("Column metrics use the first 10,000 matching rows in source order, or all matches when fewer. The row count is exact. Blank values include NULL and space-only text. Numeric metrics use stored numbers only; text is never treated as zero.", "تعتمد مقاييس الأعمدة على أول 10 آلاف صف مطابق بترتيب المصدر، أو كل الصفوف إن كانت أقل. عدد الصفوف دقيق. تشمل القيم الفارغة NULL والنص المكوّن من مسافات. تُحسب المقاييس الرقمية من الأرقام المخزّنة فقط؛ لا يُعامل النص كصفر."),
+        "overview.missing": ("Missing in profiled rows", "القيم المفقودة في الصفوف المحلّلة"),
+        "overview.distinct": ("Distinct non-empty values", "القيم المختلفة غير الفارغة"),
+        "overview.average": ("Average", "المتوسط"),
+        "overview.minimum": ("Minimum", "الأدنى"),
+        "overview.maximum": ("Maximum", "الأعلى"),
+        "overview.invalidNumbers": ("%d non-empty values are not stored as numbers; excluded from numeric metrics.", "%d قيمة غير فارغة ليست مخزّنة كأرقام؛ استُبعدت من المقاييس الرقمية."),
+        "overview.showMissing": ("Show missing across entire sheet", "عرض القيم المفقودة في الورقة كاملة"),
+        "overview.missingScope": ("Replaces current filters and search. The grid may include more missing rows than this profile sample.", "يستبدل الفلاتر والبحث الحاليين. قد يعرض الجدول صفوفًا مفقودة أكثر من هذه العينة."),
         "ai.usedProvider": ("Answered by", "تمت الإجابة عبر")
     ]
 }
@@ -193,7 +253,14 @@ final class AppSettings: ObservableObject {
     @AppStorage("aiBaseURLsJSON") var aiBaseURLsJSON: String = "{}" { didSet { objectWillChange.send() } }
     @AppStorage("aiFallback") var aiFallbackEnabled: Bool = true { didSet { objectWillChange.send() } }
 
-    private init() {
+    @Published private var apiKeys: [AIProvider: String] = [:]
+    @Published private(set) var apiKeysLoaded = false
+    @Published private(set) var apiKeyLoadError: String?
+    private let credentialStorage: AICredentialStorage
+    private var credentialLoadTask: Task<Void, Error>?
+
+    init(credentialStorage: AICredentialStorage = KeychainCredentialStorage()) {
+        self.credentialStorage = credentialStorage
         L10n.language = AppLanguage(rawValue: languageRaw) ?? .ar
     }
 
@@ -222,16 +289,42 @@ final class AppSettings: ObservableObject {
 
     // MARK: Per-provider keys, models and endpoints
 
-    func apiKey(for provider: AIProvider) -> String {
-        Keychain.get(provider.keychainKey) ?? ""
-    }
-
-    func setAPIKey(_ key: String, for provider: AIProvider) {
-        Keychain.set(key.trimmingCharacters(in: .whitespacesAndNewlines), for: provider.keychainKey)
-        objectWillChange.send()
-    }
+    /// Pure memory reads: safe to call repeatedly from SwiftUI body computations.
+    func apiKey(for provider: AIProvider) -> String { apiKeys[provider] ?? "" }
 
     func hasKey(_ provider: AIProvider) -> Bool { !apiKey(for: provider).isEmpty }
+
+    @MainActor
+    func loadAPIKeys() async throws {
+        guard !apiKeysLoaded else { return }
+        if let task = credentialLoadTask {
+            try await task.value
+            return
+        }
+        let storage = credentialStorage
+        let task = Task { @MainActor in
+            defer { credentialLoadTask = nil }
+            do {
+                apiKeys = try await storage.load()
+                apiKeysLoaded = true
+                apiKeyLoadError = nil
+            } catch {
+                apiKeyLoadError = error.localizedDescription
+                throw error
+            }
+        }
+        credentialLoadTask = task
+        try await task.value
+    }
+
+    @MainActor
+    func setAPIKey(_ key: String, for provider: AIProvider) async throws {
+        try await loadAPIKeys()
+        let value = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        try await credentialStorage.set(value, for: provider)
+        // Publish only after Security confirms persistence; failed writes keep the old key.
+        apiKeys[provider] = value
+    }
 
     private func dictionary(_ json: String) -> [String: String] {
         guard let data = json.data(using: .utf8),

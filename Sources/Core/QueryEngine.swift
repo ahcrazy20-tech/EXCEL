@@ -299,6 +299,9 @@ final class QueryEngine: @unchecked Sendable {
     }
 
     func runAnalysis(_ spec: AnalysisSpec) throws -> ResultTable {
+        if !spec.groupBy.isEmpty && spec.aggregations.contains(where: { $0.function == .median }) {
+            throw AnalysisError.invalidPlan
+        }
         let (w, p) = whereClause(spec.query)
         var selects: [String] = []
         var titles: [String] = []
@@ -330,6 +333,13 @@ final class QueryEngine: @unchecked Sendable {
         var rows = try db.query(sql, p)
         var truncated = false
         if rows.count > limit { rows.removeLast(); truncated = true }
+        if spec.groupBy.isEmpty, !rows.isEmpty {
+            for (index, aggregation) in aggs.enumerated() where aggregation.function == .median {
+                if let column = aggregation.columnIndex {
+                    rows[0][index] = try median(columnIndex: column, query: spec.query).map { .double($0) } ?? .null
+                }
+            }
+        }
         return ResultTable(columns: titles, rows: rows, truncated: truncated)
     }
 
@@ -423,30 +433,31 @@ final class QueryEngine: @unchecked Sendable {
         return rows.map { $0[0].stringValue }
     }
 
-    func duplicateGroups(columns: [Int], limit: Int = 200) throws -> ResultTable {
+    func duplicateGroups(columns: [Int], limit: Int = 200, query: QuerySpec = QuerySpec()) throws -> ResultTable {
         let cols = columns.compactMap { column($0) }
         guard !cols.isEmpty else { return ResultTable(columns: [], rows: []) }
         let sel = cols.joined(separator: ",")
-        let rows = try db.query("""
+        let (whereSQL, params) = whereClause(query)
+        let cap = max(1, min(limit, 5000))
+        var rows = try db.query("""
             SELECT \(sel), COUNT(*) AS n FROM \(sheet.tableName.sqlIdentifier)
-            GROUP BY \(sel) HAVING n > 1 ORDER BY n DESC LIMIT \(limit)
-            """)
-        return ResultTable(columns: columns.map { columnName($0) } + ["Count"], rows: rows)
+            \(whereSQL.isEmpty ? "" : "WHERE " + whereSQL)
+            GROUP BY \(sel) HAVING n > 1 ORDER BY n DESC LIMIT \(cap + 1)
+            """, params)
+        let truncated = rows.count > cap
+        if truncated { rows.removeLast() }
+        return ResultTable(columns: columns.map { columnName($0) } + ["Count"], rows: rows, truncated: truncated)
     }
 
     /// Free-form SQL against the sheet table, exposed as `data`.
     func runSQL(_ raw: String) throws -> ResultTable {
-        let sql = raw.replacingOccurrences(of: "{table}", with: sheet.tableName.sqlIdentifier)
-            .replacingOccurrences(of: " data ", with: " \(sheet.tableName.sqlIdentifier) ")
-            .replacingOccurrences(of: "FROM data", with: "FROM \(sheet.tableName.sqlIdentifier)")
-            .replacingOccurrences(of: "from data", with: "from \(sheet.tableName.sqlIdentifier)")
-        let upper = sql.uppercased()
-        for forbidden in ["DROP ", "DELETE ", "UPDATE ", "INSERT ", "ALTER ", "ATTACH ", "PRAGMA "] where upper.contains(forbidden) {
-            throw DBError.exec("Only SELECT queries are allowed")
+        let reader: Database
+        if db.analysisPolicy != nil {
+            reader = db
+        } else {
+            reader = try Database(path: db.path, analysisPolicy: AnalysisQueryPolicy(tableName: sheet.tableName))
         }
-        let names = try db.columnNames(sql)
-        let rows = try db.query(sql)
-        return ResultTable(columns: names, rows: rows)
+        return try reader.readResult(raw, limit: 500)
     }
 
     /// Creates an index on a column to speed up repeated filtering/sorting.
@@ -517,7 +528,7 @@ final class QueryEngine: @unchecked Sendable {
         let groupBy = selects.joined(separator: ",")
         let groupCap = 200_000
         let sql = "SELECT \(groupBy), \(metric) FROM \(sheet.tableName.sqlIdentifier)\(whereSQL) GROUP BY \(groupBy) LIMIT \(groupCap + 1)"
-        let groups = try db.query(sql, p)
+        var groups = try db.query(sql, p)
         if groups.count > groupCap {
             out.groupCapReached = true
             groups.removeLast()

@@ -58,6 +58,7 @@ final class Database: @unchecked Sendable {
     private var handle: OpaquePointer?
     private let queue = DispatchQueue(label: "sheetx.db")
     let path: String
+    let analysisPolicy: AnalysisQueryPolicy?
 
     // Prepared-statement cache: page fetches / counts / filters reuse the same SQL
     // strings constantly, so preparing once and resetting is a significant win.
@@ -65,22 +66,48 @@ final class Database: @unchecked Sendable {
     private var stmtKeys: [String] = []
     private let stmtCacheLimit = 64
 
-    init(path: String) throws {
+    init(path: String, analysisPolicy: AnalysisQueryPolicy? = nil) throws {
         self.path = path
+        self.analysisPolicy = analysisPolicy
         var h: OpaquePointer?
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        let flags = analysisPolicy == nil
+            ? SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+            : SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
         if sqlite3_open_v2(path, &h, flags, nil) != SQLITE_OK {
             let msg = h.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
+            if let h { sqlite3_close_v2(h) }
             throw DBError.open(msg)
         }
         handle = h
-        try exec("PRAGMA journal_mode=WAL;")
-        try exec("PRAGMA synchronous=NORMAL;")
-        try exec("PRAGMA temp_store=MEMORY;")
-        try exec("PRAGMA cache_size=-40000;")   // ~40MB page cache
-        try exec("PRAGMA mmap_size=268435456;") // 256MB mmap
-        try exec("PRAGMA wal_autocheckpoint=1000;")
-        try exec("PRAGMA busy_timeout=5000;")
+        do {
+            if let policy = analysisPolicy {
+                try policy.check()
+                sqlite3_busy_timeout(handle, 100)
+                sqlite3_limit(handle, SQLITE_LIMIT_LENGTH, 1_048_576)
+                sqlite3_limit(handle, SQLITE_LIMIT_SQL_LENGTH, 100_000)
+                sqlite3_limit(handle, SQLITE_LIMIT_COLUMN, 256)
+                sqlite3_limit(handle, SQLITE_LIMIT_EXPR_DEPTH, 100)
+                sqlite3_limit(handle, SQLITE_LIMIT_COMPOUND_SELECT, 20)
+                try exec("PRAGMA cache_size=-8000;")
+                // The local alias avoids text replacement inside SQL literals/comments.
+                try exec("CREATE TEMP VIEW data AS SELECT rowid AS rowid,* FROM main.\(policy.tableName.sqlIdentifier);")
+                try exec("PRAGMA query_only=ON;")
+                try exec("BEGIN;") // one consistent read snapshot for multi-statement profiling
+                policy.install(on: handle)
+            } else {
+                try exec("PRAGMA journal_mode=WAL;")
+                try exec("PRAGMA synchronous=NORMAL;")
+                try exec("PRAGMA temp_store=MEMORY;")
+                try exec("PRAGMA cache_size=-40000;")
+                try exec("PRAGMA mmap_size=268435456;")
+                try exec("PRAGMA wal_autocheckpoint=1000;")
+                try exec("PRAGMA busy_timeout=5000;")
+            }
+        } catch {
+            sqlite3_close_v2(handle)
+            handle = nil
+            throw error
+        }
     }
 
     deinit {
@@ -107,6 +134,7 @@ final class Database: @unchecked Sendable {
     func run(_ sql: String, _ params: [DBValue] = []) throws -> Int {
         try queue.sync {
             let stmt = try cachedStmt(sql, params)
+            defer { sqlite3_reset(stmt) }
             let rc = sqlite3_step(stmt)
             guard rc == SQLITE_DONE || rc == SQLITE_ROW else {
                 throw DBError.exec("\(errorMessage) — SQL: \(sql.prefix(300))")
@@ -120,17 +148,46 @@ final class Database: @unchecked Sendable {
     }
 
     func query(_ sql: String, _ params: [DBValue] = []) throws -> [[DBValue]] {
+        try readResult(sql, params, truncate: false).rows
+    }
+
+    /// Bounded previews are allowed only on isolated analysis connections. Internal
+    /// queries throw on overflow instead of silently returning misleading statistics.
+    func readResult(_ sql: String, _ params: [DBValue] = [],
+                    limit: Int? = nil, truncate: Bool = true) throws -> ResultTable {
         try queue.sync {
+            try analysisPolicy?.check()
             let stmt = try cachedStmt(sql, params)
-            var rows: [[DBValue]] = []
+            defer { sqlite3_reset(stmt) }
             let cols = Int(sqlite3_column_count(stmt))
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                var row: [DBValue] = []
-                row.reserveCapacity(cols)
-                for i in 0..<cols { row.append(Database.value(stmt, Int32(i))) }
-                rows.append(row)
+            let names = (0..<cols).map { String(cString: sqlite3_column_name(stmt, Int32($0))) }
+            let cap = min(limit ?? Int.max, analysisPolicy?.maxRows ?? Int.max)
+            let byteCap = analysisPolicy?.maxBytes ?? Int.max
+            var bytes = 0
+            var rows: [[DBValue]] = []
+            var truncated = false
+            while true {
+                try analysisPolicy?.check()
+                let rc = sqlite3_step(stmt)
+                if rc == SQLITE_DONE { break }
+                guard rc == SQLITE_ROW else {
+                    try analysisPolicy?.check()
+                    throw DBError.exec(errorMessage)
+                }
+                let rowBytes = (0..<cols).reduce(0) { size, index in
+                    let type = sqlite3_column_type(stmt, Int32(index))
+                    return size + 32 + (type == SQLITE_TEXT || type == SQLITE_BLOB
+                        ? Int(sqlite3_column_bytes(stmt, Int32(index))) : 8)
+                }
+                if rows.count >= cap || rowBytes > byteCap - bytes {
+                    guard truncate, !rows.isEmpty else { throw AnalysisError.resultTooLarge }
+                    truncated = true
+                    break
+                }
+                bytes += rowBytes
+                rows.append((0..<cols).map { Database.value(stmt, Int32($0)) })
             }
-            return rows
+            return ResultTable(columns: names, rows: rows, truncated: truncated)
         }
     }
 
@@ -142,6 +199,7 @@ final class Database: @unchecked Sendable {
     func columnNames(_ sql: String, _ params: [DBValue] = []) throws -> [String] {
         try queue.sync {
             let stmt = try cachedStmt(sql, params)
+            defer { sqlite3_reset(stmt) }
             let cols = Int(sqlite3_column_count(stmt))
             return (0..<cols).map { String(cString: sqlite3_column_name(stmt, Int32($0))) }
         }
@@ -248,8 +306,32 @@ final class Database: @unchecked Sendable {
             stmt = cached
         } else {
             var s: OpaquePointer?
-            guard sqlite3_prepare_v2(handle, sql, -1, &s, nil) == SQLITE_OK else {
-                throw DBError.prepare("\(errorMessage) — SQL: \(sql.prefix(300))")
+            do {
+                try sql.withCString { text in
+                    var tail: UnsafePointer<CChar>?
+                    guard sqlite3_prepare_v2(handle, text, -1, &s, &tail) == SQLITE_OK, s != nil else {
+                        try analysisPolicy?.check()
+                        throw DBError.prepare(errorMessage)
+                    }
+                    if analysisPolicy != nil {
+                        guard sqlite3_stmt_readonly(s) != 0 else { throw AnalysisError.readOnly }
+                        // Ask SQLite to parse the tail: semicolons in strings and trailing
+                        // comments are safe, a second statement (even SELECT) is not.
+                        while let rest = tail, rest.pointee != 0 {
+                            var extra: OpaquePointer?
+                            var next: UnsafePointer<CChar>?
+                            let rc = sqlite3_prepare_v2(handle, rest, -1, &extra, &next)
+                            let hasExtra = extra != nil
+                            sqlite3_finalize(extra)
+                            guard rc == SQLITE_OK, !hasExtra else { throw AnalysisError.multipleStatements }
+                            if next == rest { break }
+                            tail = next
+                        }
+                    }
+                }
+            } catch {
+                sqlite3_finalize(s)
+                throw error
             }
             stmt = s
             if stmtKeys.count >= stmtCacheLimit, let oldest = stmtKeys.first {

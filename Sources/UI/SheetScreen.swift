@@ -11,6 +11,8 @@ struct SheetScreen: View {
     @State private var showColumns = false
     @State private var showAsk = false
     @State private var showCharts = false
+    @State private var showOverview = false
+    @State private var showSavedAnalyses = false
     @State private var showStats = false
     @State private var showExport = false
     @State private var showPivot = false
@@ -52,6 +54,9 @@ struct SheetScreen: View {
         .sheet(isPresented: $showCharts) {
             ChartsView(vm: vm)
         }
+        .sheet(isPresented: $showOverview) { DataOverviewView(vm: vm) }
+        .sheet(isPresented: $showSavedAnalyses) { SavedAnalysesView(vm: vm) }
+        .onChange(of: vm.query.search) { value in searchText = value }
         .sheet(isPresented: $showStats) {
             StatsView(vm: vm)
         }
@@ -148,6 +153,9 @@ struct SheetScreen: View {
                 Image(systemName: "sparkles")
             }
             Menu {
+                Button { showOverview = true } label: { Label("overview.title".loc, systemImage: "rectangle.3.group") }
+                Button { showSavedAnalyses = true } label: { Label("analysis.saved".loc, systemImage: "bookmark") }
+                Divider()
                 Button { showPivot = true } label: { Label("sheet.pivot".loc, systemImage: "square.split.2x2") }
                 Button { showFilters = true } label: { Label("sheet.filters".loc, systemImage: "line.3.horizontal.decrease.circle") }
                 Button { showColumns = true } label: { Label("sheet.columns".loc, systemImage: "list.bullet.indent") }

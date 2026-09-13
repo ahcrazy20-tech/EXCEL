@@ -75,6 +75,7 @@ struct SettingsView: View {
                             }
                         }
                     }
+                    .accessibilityIdentifier("ai.settings")
                     if settings.hasAI {
                         HStack {
                             Text("ai.active".loc).font(.caption)

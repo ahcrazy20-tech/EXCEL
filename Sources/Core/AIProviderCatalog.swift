@@ -85,16 +85,18 @@ extension AIProvider {
 
     /// Endpoint that lists the models available to this key.
     func modelsURL(baseURL: String, apiKey: String) -> URL? {
-        var base = baseURL.isEmpty ? defaultBaseURL : baseURL
-        if base.hasSuffix("/") { base.removeLast() }
-        switch self {
-        case .gemini:
-            return URL(string: "\(base)/models?key=\(apiKey)&pageSize=200")
-        case .githubModels:
+        let base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let root = AIEndpoint.baseURL(base.isEmpty ? defaultBaseURL : base) else { return nil }
+        if self == .githubModels {
             return URL(string: "https://models.github.ai/catalog/models")
-        default:
-            return URL(string: "\(base)/models")
         }
+        let url = root.appendingPathComponent("models")
+        if self == .gemini {
+            var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            parts?.queryItems = [URLQueryItem(name: "pageSize", value: "1000")]
+            return parts?.url
+        }
+        return url
     }
 }
 
@@ -106,56 +108,88 @@ struct AIModelOption: Identifiable, Hashable {
 
 /// Fetches the live model catalogue for a provider so the user can pick a working (free) model.
 enum AIModelDirectory {
-    static func fetch(provider: AIProvider, baseURL: String, apiKey: String) async throws -> [AIModelOption] {
+    static func fetch(provider: AIProvider, baseURL: String, apiKey: String,
+                      session: URLSession = .shared) async throws -> [AIModelOption] {
         guard let url = provider.modelsURL(baseURL: baseURL, apiKey: apiKey) else {
-            return provider.suggestedModels.map { AIModelOption(name: $0, isFree: provider.isFree) }
+            throw AIError.badResponse("ai.invalidURL".loc)
         }
         var req = URLRequest(url: url)
-        req.timeoutInterval = 30
-        if provider != .gemini, !apiKey.isEmpty {
-            req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        req.timeoutInterval = 20
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !key.isEmpty {
+            req.setValue(provider == .gemini ? key : "Bearer \(key)",
+                         forHTTPHeaderField: provider == .gemini ? "x-goog-api-key" : "Authorization")
         }
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await session.data(for: req)
+        try Task.checkCancellation()
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-            throw AIError.http(code, String(decoding: data, as: UTF8.self))
+            throw AIError.http(code, String(decoding: data.prefix(2000), as: UTF8.self))
         }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            // GitHub catalog returns a bare array.
-            if let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-                let names = array.compactMap { ($0["id"] as? String) ?? ($0["name"] as? String) }
-                return names.map { AIModelOption(name: $0, isFree: true) }
-            }
+        return try parse(data, provider: provider)
+    }
+
+    /// Pure parsing, independently testable with provider fixtures. Duplicate identifiers
+    /// from compatible APIs must not reach SwiftUI's ForEach diffing.
+    static func parse(_ data: Data, provider: AIProvider) throws -> [AIModelOption] {
+        let payload = try JSONSerialization.jsonObject(with: data)
+        let json = payload as? [String: Any]
+        let items: [[String: Any]]
+        if provider == .githubModels, let array = payload as? [[String: Any]] {
+            items = array
+        } else if let array = json?[provider == .gemini ? "models" : "data"] as? [[String: Any]] {
+            items = array
+        } else {
             throw AIError.badResponse("model list")
         }
 
-        if provider == .gemini {
-            let models = (json["models"] as? [[String: Any]]) ?? []
-            let names = models.compactMap { m -> String? in
-                guard let full = m["name"] as? String else { return nil }
-                let methods = (m["supportedGenerationMethods"] as? [String]) ?? ["generateContent"]
-                guard methods.contains("generateContent") else { return nil }
-                return full.replacingOccurrences(of: "models/", with: "")
-            }
-            return names.map { AIModelOption(name: $0, isFree: $0.contains("flash") || $0.contains("lite")) }
-        }
-
-        let items = (json["data"] as? [[String: Any]]) ?? []
-        var out: [AIModelOption] = []
+        var options: [AIModelOption] = []
         for item in items {
-            guard let id = item["id"] as? String else { continue }
-            var free = provider.isFree
-            if provider == .openRouter {
-                free = id.hasSuffix(":free")
-                if let pricing = item["pricing"] as? [String: Any],
-                   let prompt = pricing["prompt"] as? String {
-                    free = free || Double(prompt) == 0
+            if provider == .gemini {
+                guard let full = item["name"] as? String,
+                      let methods = item["supportedGenerationMethods"] as? [String],
+                      methods.contains("generateContent") else { continue }
+                let name = full.hasPrefix("models/") ? String(full.dropFirst(7)) : full
+                options.append(AIModelOption(name: name, isFree: name.contains("flash") || name.contains("lite")))
+            } else {
+                guard let name = (item["id"] as? String)
+                        ?? (provider == .githubModels ? item["name"] as? String : nil) else { continue }
+                var free = provider.isFree
+                if provider == .openRouter {
+                    free = name.hasSuffix(":free")
+                    if let pricing = item["pricing"] as? [String: Any] {
+                        // A zero input price alone doesn't mean output tokens are free.
+                        func isZero(_ value: Any?) -> Bool {
+                            if let text = value as? String { return Double(text) == 0 }
+                            if let number = value as? NSNumber { return number.doubleValue == 0 }
+                            return false
+                        }
+                        free = free || (isZero(pricing["prompt"]) && isZero(pricing["completion"]))
+                    }
                 }
+                options.append(AIModelOption(name: name, isFree: free))
             }
-            out.append(AIModelOption(name: id, isFree: free))
         }
-        // Free models first, then alphabetical.
-        return out.sorted { ($0.isFree ? 0 : 1, $0.name) < ($1.isFree ? 0 : 1, $1.name) }
+        return normalized(options)
+    }
+
+    static func normalized(_ models: [AIModelOption]) -> [AIModelOption] {
+        var unique: [String: Bool] = [:]
+        for model in models {
+            let name = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            // Conflicting metadata should not falsely advertise a free model.
+            unique[name] = (unique[name] ?? true) && model.isFree
+        }
+        return unique.map { AIModelOption(name: $0.key, isFree: $0.value) }
+            .sorted { ($0.isFree ? 0 : 1, $0.name) < ($1.isFree ? 0 : 1, $1.name) }
+    }
+
+    static func matching(_ models: [AIModelOption], query: String, freeOnly: Bool) -> [AIModelOption] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return models.filter {
+            (!freeOnly || $0.isFree) && (query.isEmpty || $0.name.localizedCaseInsensitiveContains(query))
+        }
     }
 }
 
@@ -174,13 +208,19 @@ final class AIRouter {
     private func attempt<T>(_ work: (AIClient) async throws -> T) async throws -> T {
         guard !configs.isEmpty else { throw AIError.noKey }
         lastErrors = []
+        lastUsedProvider = nil
         var lastError: Error = AIError.noKey
         for config in configs {
+            try Task.checkCancellation()
             do {
                 let value = try await work(AIClient(config: config))
                 lastUsedProvider = config.provider
                 return value
             } catch {
+                if error is CancellationError || (error as? URLError)?.code == .cancelled {
+                    throw CancellationError()
+                }
+                try Task.checkCancellation()
                 let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 lastErrors.append("\(config.provider.display): \(message)")
                 lastError = error
@@ -190,8 +230,8 @@ final class AIRouter {
         throw AIRouterError.allFailed(lastErrors, underlying: lastError)
     }
 
-    func plan(command: String, sheet: SheetInfo, sample: ResultTable) async throws -> CommandPlan {
-        try await attempt { try await $0.plan(command: command, sheet: sheet, sample: sample) }
+    func plan(command: String, sheet: SheetInfo) async throws -> CommandPlan {
+        try await attempt { try await $0.plan(command: command, sheet: sheet) }
     }
 
     func narrate(reportContext: String, language: String) async throws -> String {

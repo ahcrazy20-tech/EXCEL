@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 enum AIProvider: String, CaseIterable, Identifiable, Codable {
     case groq, gemini, cerebras, mistral, openRouter, githubModels, openAI, custom
@@ -68,17 +69,24 @@ struct AIConfig {
     var apiKey: String
 }
 
-/// Talks to OpenAI-compatible and Gemini endpoints. Only schema + tiny samples are sent — never the whole file.
+/// Talks to OpenAI-compatible and Gemini endpoints. Planning uses schema only; narration uses the caller-provided report/result context.
 final class AIClient {
     let config: AIConfig
 
-    init(config: AIConfig) { self.config = config }
+    private let requestTimeout: TimeInterval
+    private let session: URLSession
+
+    init(config: AIConfig, requestTimeout: TimeInterval = 120, session: URLSession = .shared) {
+        self.config = config
+        self.requestTimeout = requestTimeout
+        self.session = session
+    }
 
     // MARK: Public entry points
 
     /// Converts a natural-language command into a structured plan using the sheet schema.
-    func plan(command: String, sheet: SheetInfo, sample: ResultTable) async throws -> CommandPlan {
-        let schema = AIClient.schemaDescription(sheet: sheet, sample: sample)
+    func plan(command: String, sheet: SheetInfo) async throws -> CommandPlan {
+        let schema = AIClient.schemaDescription(sheet: sheet)
         let system = """
         You translate user requests about a single spreadsheet table into a strict JSON plan.
         Output ONLY minified JSON, no markdown, no commentary.
@@ -122,7 +130,8 @@ final class AIClient {
     // MARK: Transport
 
     func complete(system: String, user: String, jsonMode: Bool) async throws -> String {
-        guard !config.apiKey.isEmpty else { throw AIError.noKey }
+        try Task.checkCancellation()
+        guard !config.apiKey.isEmpty || config.provider == .custom else { throw AIError.noKey }
         switch config.provider {
         case .gemini: return try await callGemini(system: system, user: user, jsonMode: jsonMode)
         default: return try await callOpenAICompatible(system: system, user: user, jsonMode: jsonMode)
@@ -130,14 +139,17 @@ final class AIClient {
     }
 
     private func callOpenAICompatible(system: String, user: String, jsonMode: Bool) async throws -> String {
-        var base = config.baseURL.isEmpty ? config.provider.defaultBaseURL : config.baseURL
-        if base.hasSuffix("/") { base.removeLast() }
-        guard let url = URL(string: base + "/chat/completions") else { throw AIError.badResponse("bad base URL") }
+        guard let base = AIEndpoint.baseURL(config.baseURL.isEmpty ? config.provider.defaultBaseURL : config.baseURL) else {
+            throw AIError.badResponse("ai.invalidURL".loc)
+        }
+        let url = base.appendingPathComponent("chat/completions")
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.timeoutInterval = 120
+        req.timeoutInterval = requestTimeout
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        if !config.apiKey.isEmpty {
+            req.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        }
         if config.provider == .openRouter {
             req.setValue("https://sheetx.app", forHTTPHeaderField: "HTTP-Referer")
             req.setValue("SheetX", forHTTPHeaderField: "X-Title")
@@ -155,7 +167,8 @@ final class AIClient {
         }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await session.data(for: req)
+        try Task.checkCancellation()
         guard let http = response as? HTTPURLResponse else { throw AIError.badResponse("no response") }
         guard (200..<300).contains(http.statusCode) else {
             throw AIError.http(http.statusCode, String(decoding: data, as: UTF8.self))
@@ -170,16 +183,16 @@ final class AIClient {
     }
 
     private func callGemini(system: String, user: String, jsonMode: Bool) async throws -> String {
-        var base = config.baseURL.isEmpty ? config.provider.defaultBaseURL : config.baseURL
-        if base.hasSuffix("/") { base.removeLast() }
-        let model = config.model.isEmpty ? config.provider.defaultModel : config.model
-        guard let url = URL(string: "\(base)/models/\(model):generateContent?key=\(config.apiKey)") else {
-            throw AIError.badResponse("bad base URL")
+        guard let base = AIEndpoint.baseURL(config.baseURL.isEmpty ? config.provider.defaultBaseURL : config.baseURL) else {
+            throw AIError.badResponse("ai.invalidURL".loc)
         }
+        let model = config.model.isEmpty ? config.provider.defaultModel : config.model
+        let url = base.appendingPathComponent("models/\(model):generateContent")
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.timeoutInterval = 120
+        req.timeoutInterval = requestTimeout
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(config.apiKey, forHTTPHeaderField: "x-goog-api-key")
         var generation: [String: Any] = ["temperature": jsonMode ? 0 : 0.3]
         if jsonMode { generation["response_mime_type"] = "application/json" }
         let body: [String: Any] = [
@@ -189,7 +202,8 @@ final class AIClient {
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await session.data(for: req)
+        try Task.checkCancellation()
         guard let http = response as? HTTPURLResponse else { throw AIError.badResponse("no response") }
         guard (200..<300).contains(http.statusCode) else {
             throw AIError.http(http.statusCode, String(decoding: data, as: UTF8.self))
@@ -205,16 +219,10 @@ final class AIClient {
 
     // MARK: Helpers
 
-    static func schemaDescription(sheet: SheetInfo, sample: ResultTable) -> String {
+    static func schemaDescription(sheet: SheetInfo) -> String {
         var lines: [String] = ["table: data", "rows: \(sheet.rowCount)", "columns:"]
         for c in sheet.columns {
             lines.append("  [\(c.index)] \"\(c.name)\" (\(c.kind.rawValue)) sql=c\(c.index)")
-        }
-        if !sample.rows.isEmpty {
-            lines.append("sample rows (first \(min(5, sample.rows.count))):")
-            for r in sample.rows.prefix(5) {
-                lines.append("  " + r.map { $0.stringValue.prefix(24).description }.joined(separator: " | "))
-            }
         }
         return lines.joined(separator: "\n")
     }
@@ -229,46 +237,78 @@ final class AIClient {
             throw AIError.badResponse(raw.prefix(200).description)
         }
 
+        func array(_ key: String) throws -> [Any] {
+            guard let value = obj[key] else { return [] }
+            guard let values = value as? [Any] else { throw AnalysisError.invalidPlan }
+            return values
+        }
+        func integer(_ value: Any?) throws -> Int {
+            guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  let integer = value as? Int else { throw AnalysisError.invalidPlan }
+            return integer
+        }
+        func column(_ value: Any?, required: Bool = true) throws -> Int? {
+            if !required && (value == nil || value is NSNull) { return nil }
+            let index = try integer(value)
+            guard sheet.columns.contains(where: { $0.index == index }) else {
+                throw AnalysisError.invalidPlan
+            }
+            return index
+        }
+        func boolean(_ value: Any?, fallback: Bool) throws -> Bool {
+            guard let value else { return fallback }
+            guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+                throw AnalysisError.invalidPlan
+            }
+            return number.boolValue
+        }
+        guard let kind = obj["kind"] as? String, let parsedKind = CommandPlan.Kind(rawValue: kind) else {
+            throw AnalysisError.invalidPlan
+        }
         var plan = CommandPlan()
-        plan.kind = CommandPlan.Kind(rawValue: (obj["kind"] as? String) ?? "filterRows") ?? .filterRows
-        plan.explanation = (obj["explanation"] as? String) ?? ""
+        plan.kind = parsedKind
+        plan.explanation = (obj["explanation"] as? String) ?? fallbackCommand
         plan.sql = (obj["sql"] as? String) ?? ""
-        plan.confidence = 0.9
-
-        let maxIndex = sheet.columns.count - 1
-        func valid(_ i: Int?) -> Int? {
-            guard let i, i >= 0, i <= maxIndex else { return nil }
-            return i
+        if let limit = obj["limit"] {
+            let value = try integer(limit)
+            guard value > 0 else { throw AnalysisError.invalidPlan }
+            plan.analysis.limit = min(value, 5000)
         }
-
-        plan.analysis.limit = (obj["limit"] as? Int) ?? 50
-        plan.analysis.sortDescending = (obj["sortDescending"] as? Bool) ?? true
-        plan.analysis.groupBy = ((obj["groupBy"] as? [Any]) ?? []).compactMap { valid($0 as? Int) }
-        plan.analysis.query.search = (obj["search"] as? String) ?? ""
-        if let j = obj["join"] as? String, let join = FilterJoin(rawValue: j) { plan.analysis.query.join = join }
-
-        if let aggs = obj["aggregations"] as? [[String: Any]] {
-            plan.analysis.aggregations = aggs.compactMap { a in
-                guard let f = a["function"] as? String, let fn = AggFunction(rawValue: f) else { return nil }
-                return Aggregation(function: fn, columnIndex: valid(a["columnIndex"] as? Int))
+        plan.analysis.sortDescending = try boolean(obj["sortDescending"], fallback: true)
+        plan.analysis.groupBy = try array("groupBy").map { try column($0)! }
+        if let search = obj["search"] {
+            guard let value = search as? String else { throw AnalysisError.invalidPlan }
+            plan.analysis.query.search = value
+        }
+        if let join = obj["join"] {
+            guard let value = join as? String, let parsed = FilterJoin(rawValue: value) else {
+                throw AnalysisError.invalidPlan
             }
+            plan.analysis.query.join = parsed
         }
-        if let filters = obj["filters"] as? [[String: Any]] {
-            plan.analysis.query.filters = filters.compactMap { f in
-                guard let idx = valid(f["columnIndex"] as? Int) else { return nil }
-                let op = FilterOperator(rawValue: (f["op"] as? String) ?? "contains") ?? .contains
-                return FilterCondition(columnIndex: idx, op: op,
-                                       value: stringify(f["value"]), value2: stringify(f["value2"]))
+        plan.analysis.aggregations = try array("aggregations").map { value in
+            guard let item = value as? [String: Any], let name = item["function"] as? String,
+                  let function = AggFunction(rawValue: name) else { throw AnalysisError.invalidPlan }
+            return Aggregation(function: function,
+                               columnIndex: try column(item["columnIndex"], required: function.needsColumn))
+        }
+        plan.analysis.query.filters = try array("filters").map { value in
+            guard let item = value as? [String: Any], let name = item["op"] as? String,
+                  let op = FilterOperator(rawValue: name),
+                  !op.needsValue || item["value"] != nil else { throw AnalysisError.invalidPlan }
+            for key in (op.needsSecondValue ? ["value", "value2"] : (op.needsValue ? ["value"] : [])) {
+                let value = item[key]
+                guard value is String || value is NSNumber else { throw AnalysisError.invalidPlan }
             }
+            return FilterCondition(columnIndex: try column(item["columnIndex"])!, op: op,
+                                   value: stringify(item["value"]), value2: stringify(item["value2"]))
         }
-        if let sorts = obj["sorts"] as? [[String: Any]] {
-            plan.analysis.query.sorts = sorts.compactMap { s in
-                guard let idx = valid(s["columnIndex"] as? Int) else { return nil }
-                return SortSpec(columnIndex: idx, ascending: (s["ascending"] as? Bool) ?? true)
-            }
+        plan.analysis.query.sorts = try array("sorts").map { value in
+            guard let item = value as? [String: Any] else { throw AnalysisError.invalidPlan }
+            return SortSpec(columnIndex: try column(item["columnIndex"])!,
+                            ascending: try boolean(item["ascending"], fallback: true))
         }
-        if plan.kind == .sql && plan.sql.isEmpty { plan.kind = .filterRows }
-        if plan.explanation.isEmpty { plan.explanation = fallbackCommand }
+        try plan.validate(for: sheet)
         return plan
     }
 
