@@ -124,6 +124,7 @@ enum DashboardRunner {
             try policy.check()
             let sql: String
             let limit: Int
+            var numericResultIndex: Int?
             if card.display == .table {
                 limit = 50
                 let fields = sheet.columns.map { $0.sqlName.sqlIdentifier + " AS " + $0.name.sqlIdentifier }.joined(separator: ",")
@@ -141,17 +142,32 @@ enum DashboardRunner {
                 case .maximum: expression = "MAX(\(numeric))"
                 case .distinct: expression = "COUNT(DISTINCT \(column))"
                 }
+                let checksNumeric = card.metric != .count && card.metric != .distinct
+                let extra = checksNumeric ? ",COUNT(\(numeric)) AS _numeric_count" : ""
                 if card.display == .kpi {
                     limit = 1
-                    sql = "SELECT \(expression) AS \(card.metric.title.sqlIdentifier) FROM \(source)\(whereSQL)"
+                    numericResultIndex = checksNumeric ? 0 : nil
+                    sql = "SELECT \(expression) AS \(card.metric.title.sqlIdentifier)\(extra) FROM \(source)\(whereSQL)"
                 } else {
                     limit = card.display == .bar ? 12 : 24
+                    numericResultIndex = checksNumeric ? 1 : nil
                     let group = "c\(card.groupColumn)".sqlIdentifier
                     let order = card.display == .bar ? "2 DESC,1 ASC" : "1 ASC"
-                    sql = "SELECT \(group) AS \(sheet.columns[card.groupColumn].name.sqlIdentifier),\(expression) AS \(card.metric.title.sqlIdentifier) FROM \(source)\(whereSQL) GROUP BY \(group) ORDER BY \(order) LIMIT \(limit + 1)"
+                    sql = "SELECT \(group) AS \(sheet.columns[card.groupColumn].name.sqlIdentifier),\(expression) AS \(card.metric.title.sqlIdentifier)\(extra) FROM \(source)\(whereSQL) GROUP BY \(group) ORDER BY \(order) LIMIT \(limit + 1)"
                 }
             }
-            let table = try db.readResult(sql, params, limit: limit)
+            var table = try db.readResult(sql, params, limit: limit)
+            if let valueIndex = numericResultIndex {
+                // SQLite's compensated floating sum can return NULL on overflow,
+                // not just infinity. Distinguish that from truly empty numeric input.
+                for row in table.rows {
+                    if row[valueIndex] == .null, case .int(let count) = row.last, count > 0 {
+                        throw DashboardError.nonFinite
+                    }
+                }
+                table.columns.removeLast()
+                table.rows = table.rows.map { Array($0.dropLast()) }
+            }
             for row in table.rows {
                 for value in row {
                     if case .double(let number) = value, !number.isFinite { throw DashboardError.nonFinite }
