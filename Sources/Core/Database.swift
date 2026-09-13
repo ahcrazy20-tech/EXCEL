@@ -168,12 +168,12 @@ final class Database: @unchecked Sendable {
         }
     }
 
-    func configurePreparation() throws {
+    func configurePreparation(budget: PreparationBudget? = nil) throws {
         try synchronized {
             guard analysisPolicy == nil else { throw AnalysisError.readOnly }
             try exec("PRAGMA temp_store=FILE; PRAGMA cache_size=-8000; PRAGMA mmap_size=0; PRAGMA busy_timeout=100;")
             sqlite3_limit(handle, SQLITE_LIMIT_LENGTH, 1_048_576)
-            try PreparationFunctions.install(on: handle)
+            try PreparationFunctions.install(on: handle, budget: budget)
         }
     }
 

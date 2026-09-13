@@ -11,13 +11,32 @@ enum CleanValueRules {
         }
     }
 
+    private static let digitMap: [Character: Character] = {
+        let latin = Array("0123456789")
+        return Dictionary(uniqueKeysWithValues: Array("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹").enumerated().map { ($0.element, latin[$0.offset % 10]) })
+    }()
+
     static func digits(_ text: String) -> String {
-        let arabic = Array("٠١٢٣٤٥٦٧٨٩"), persian = Array("۰۱۲۳۴۵۶۷۸۹"), latin = Array("0123456789")
-        return String(text.map { character in
-            if let index = arabic.firstIndex(of: character) { return latin[index] }
-            if let index = persian.firstIndex(of: character) { return latin[index] }
-            return character
-        })
+        String(text.map { digitMap[$0] ?? $0 })
+    }
+
+    /// Cap replacement growth before allocation (e.g. replacing every 'a' with 1,000 characters).
+    static func replace(_ text: String, find: String, replacement: String, budget: PreparationBudget? = nil) throws -> String {
+        guard !find.isEmpty else { return text }
+        var output = "", bytes = 0, matches = 0, cursor = text.startIndex
+        func append(_ part: Substring) throws {
+            let count = part.utf8.count
+            guard count <= 1_048_576 - bytes else { throw PreparationError.valueLimit }
+            bytes += count; output.append(contentsOf: part)
+        }
+        while let range = text.range(of: find, options: .literal, range: cursor..<text.endIndex) {
+            if matches % 256 == 0 { try budget?.check() }
+            try append(text[cursor..<range.lowerBound])
+            try append(replacement[...])
+            cursor = range.upperBound; matches += 1
+        }
+        try append(text[cursor...])
+        return output
     }
 
     private static let patterns: [NumberConvention: NSRegularExpression] = {
@@ -58,6 +77,8 @@ enum CleanValueRules {
 
 /// Registered only on trusted preparation connections, not in the AI SQL sandbox.
 final class PreparationFunctions {
+    private let budget: PreparationBudget?
+    init(budget: PreparationBudget? = nil) { self.budget = budget }
     private var dateReaders: [PreparationDateFormat: DateFormatter] = [:]
     private let iso = PreparationFunctions.formatter("yyyy-MM-dd")
 
@@ -82,7 +103,8 @@ final class PreparationFunctions {
         return .text(iso.string(from: date))
     }
 
-    func apply(_ value: DBValue, operation: String, first: String, second: String) -> DBValue {
+    func apply(_ value: DBValue, operation: String, first: String, second: String) throws -> DBValue {
+        try budget?.check()
         if operation == "blank" { return .int(CleanValueRules.isMissing(value) ? 1 : 0) }
         if operation == "key" {
             guard case .text(let text) = value else { return value }
@@ -102,14 +124,14 @@ final class PreparationFunctions {
             case .normalizeDigits: return .text(CleanValueRules.digits(text))
             case .lowercase: return .text(text.lowercased())
             case .uppercase: return .text(text.uppercased())
-            default: return .text(text.replacingOccurrences(of: first, with: second))
+            default: return .text(try CleanValueRules.replace(text, find: first, replacement: second, budget: budget))
             }
         default: return value
         }
     }
 
-    static func install(on handle: OpaquePointer?) throws {
-        let context = Unmanaged.passRetained(PreparationFunctions()).toOpaque()
+    static func install(on handle: OpaquePointer?, budget: PreparationBudget? = nil) throws {
+        let context = Unmanaged.passRetained(PreparationFunctions(budget: budget)).toOpaque()
         let rc = sqlite3_create_function_v2(handle, "sx_clean", 4, SQLITE_UTF8 | SQLITE_DETERMINISTIC, context,
             { context, count, arguments in
                 guard let context, count == 4, let arguments, let user = sqlite3_user_data(context) else { return }
@@ -117,7 +139,11 @@ final class PreparationFunctions {
                 let value = PreparationFunctions.read(arguments[0])
                 let operation = PreparationFunctions.read(arguments[1]).stringValue
                 let first = PreparationFunctions.read(arguments[2]).stringValue, second = PreparationFunctions.read(arguments[3]).stringValue
-                PreparationFunctions.write(functions.apply(value, operation: operation, first: first, second: second), to: context)
+                do {
+                    PreparationFunctions.write(try functions.apply(value, operation: operation, first: first, second: second), to: context)
+                } catch {
+                    sqlite3_result_error(context, error.localizedDescription, -1)
+                }
             }, nil, nil, { pointer in
                 if let pointer { Unmanaged<PreparationFunctions>.fromOpaque(pointer).release() }
             })

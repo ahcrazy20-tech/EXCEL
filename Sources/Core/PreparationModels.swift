@@ -208,7 +208,7 @@ enum PreparationLimits {
 
 enum PreparationError: LocalizedError {
     case recipe, sourceChanged, sourceLimit, outputLimit, lookupDuplicates, approveDuplicates, approveInvalid
-    case storage, timeout
+    case storage, timeout, valueLimit
     var errorDescription: String? {
         switch self {
         case .recipe: return "prep.error.recipe".loc
@@ -219,6 +219,7 @@ enum PreparationError: LocalizedError {
         case .approveDuplicates: return "prep.error.approveDuplicates".loc
         case .approveInvalid: return "prep.error.approveInvalid".loc
         case .storage: return "prep.error.storage".loc
+        case .valueLimit: return "prep.error.valueLimit".loc
         case .timeout: return "prep.error.timeout".loc
         }
     }

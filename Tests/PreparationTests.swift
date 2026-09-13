@@ -139,6 +139,14 @@ final class PreparationTests: XCTestCase {
         }
     }
 
+    func testLiteralReplacementCapsGrowthBeforeAllocatingHugeOutput() throws {
+        XCTAssertEqual(try CleanValueRules.replace("a.a", find: ".", replacement: "*"), "a*a")
+        XCTAssertEqual(try CleanValueRules.replace("a\0b", find: "\0", replacement: "-"), "a-b")
+        XCTAssertThrowsError(try CleanValueRules.replace(String(repeating: "a", count: 2000), find: "a", replacement: String(repeating: "z", count: 1000)))
+        let token = QueryCancellation(); token.cancel()
+        XCTAssertThrowsError(try CleanValueRules.replace("aaa", find: "a", replacement: "b", budget: PreparationBudget(cancellation: token)))
+    }
+
     func testStrictDatesDoNotGuessAmbiguityOrInvalidDays() {
         let functions = PreparationFunctions()
         XCTAssertEqual(functions.date(.text("03/04/2024"), format: .dayFirst), .text("2024-04-03"))

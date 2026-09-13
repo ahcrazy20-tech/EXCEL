@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PACKAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sheetx-core-tests.XXXXXX")"
 trap 'rm -rf "$PACKAGE_DIR"' EXIT
 mkdir -p "$PACKAGE_DIR/Sources" "$PACKAGE_DIR/Tests"
-for file in Database Workspace AnalysisQueryPolicy QueryEngine NLQueryParser SavedAnalysis \
+for file in Database Workspace AnalysisQueryPolicy QueryEngine NLQueryParser SavedAnalysis AIClient AIEndpoint \
     ReportBuilder AnalysisRunner DataOverview ResultPresentation \
     PreparationModels PreparationEngine CleanValueRules; do
     cp "$ROOT/Sources/Core/$file.swift" "$PACKAGE_DIR/Sources/"

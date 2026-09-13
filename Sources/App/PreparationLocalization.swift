@@ -99,6 +99,7 @@ enum PreparationLocalization {
         "prep.error.lookup": ("Lookup blocked: the right key contains duplicates. Clean/deduplicate the right source, or choose Left/Inner join and explicitly review expansion.", "تعذر البحث المرجعي: مفتاح اليمين مكرر. نظّف مصدر اليمين أو أزل تكراره، أو اختر الدمج الأيسر أو الداخلي وراجع تضاعف الصفوف صراحة."),
         "prep.error.approveDuplicates": ("Review and approve possible row expansion before saving.", "راجع ووافق على احتمال تضاعف الصفوف قبل الحفظ."),
         "prep.error.approveInvalid": ("Review and approve keeping original invalid values before saving.", "راجع ووافق على إبقاء القيم الأصلية غير الصالحة قبل الحفظ."),
+        "prep.error.valueLimit": ("A transformed value exceeds 1 MiB. Use a smaller replacement or smaller values.", "تتجاوز قيمة بعد التحويل 1 ميبيبايت. استخدم استبدالًا أقصر أو قيمًا أصغر."),
         "prep.error.storage": ("Preparation ran out of working storage. Free space or use smaller sources.", "نفدت مساحة العمل للتجهيز. أفرغ مساحة أو استخدم مصادر أصغر."),
         "prep.error.timeout": ("Preparation exceeded 120 seconds. Try fewer steps or smaller sources. No new sheet was saved.", "تجاوز التجهيز 120 ثانية. جرّب خطوات أقل أو مصادر أصغر. لم تُحفظ ورقة جديدة."),
     ]

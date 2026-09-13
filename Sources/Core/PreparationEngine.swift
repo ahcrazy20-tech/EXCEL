@@ -33,7 +33,7 @@ enum PreparationEngine {
         var retained = false
         defer { if !retained { try? FileManager.default.removeItem(at: directory) } }
         let db = try Database(path: directory.appendingPathComponent("prepared.sqlite").path)
-        try db.configurePreparation()
+        try db.configurePreparation(budget: budget)
         try db.exec("PRAGMA journal_mode=DELETE;")
         let pageSize = try count(db, "PRAGMA page_size")
         try db.exec("PRAGMA max_page_count=\(PreparationLimits.stagingBytes / Int64(pageSize));")
@@ -111,7 +111,7 @@ enum PreparationEngine {
                 try db.exec("UPDATE output SET \(column)=(SELECT v FROM transformed WHERE rid=output.rowid); DROP TABLE transformed;")
                 // A mixed column must not be advertised as fully converted.
                 if conversion { columns[step.column].kind = invalid == 0 ? (step.operation == .parseNumber ? .number : .date) : .text }
-                if step.operation == .fillMissing { columns[step.column].kind = .text }
+                if step.operation == .fillMissing || (step.operation == .replaceText && changed > 0) { columns[step.column].kind = .text }
             }
             impacts.append(CleaningImpact(id: step.id, operation: step.operation,
                                           columnName: step.operation.needsColumn ? columns[step.column].name : "",
@@ -194,7 +194,7 @@ enum PreparationEngine {
         let recipeData = try JSONEncoder().encode(preview.recipe), summaryData = try JSONEncoder().encode(preview.summary)
         guard recipeData.count <= 512 * 1024 else { throw PreparationError.recipe }
         let db = try Database(path: workspacePath)
-        try db.configurePreparation()
+        try db.configurePreparation(budget: budget)
         try db.run("ATTACH DATABASE ? AS prepared", [.text(readOnlyURI(artifact.databaseURL.path))])
         // Migration runs before the transaction on this independent connection.
         let workspace = try Workspace(db: db)
