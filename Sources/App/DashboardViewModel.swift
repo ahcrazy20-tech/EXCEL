@@ -64,9 +64,11 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func save(library: Library) async {
+        let savedRecipe = recipe
         do {
-            try await library.saveDashboard(recipe, sheet: sheet)
-            dirty = false; message = "dash.saved".loc
+            try await library.saveDashboard(savedRecipe, sheet: sheet)
+            if recipe == savedRecipe { dirty = false }
+            message = "dash.saved".loc
         } catch { message = error.localizedDescription }
     }
 }

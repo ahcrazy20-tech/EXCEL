@@ -29,7 +29,7 @@ struct DashboardView: View {
                     if let snapshot = model.snapshot {
                         ForEach(model.recipe.cards) { card in
                             if let result = snapshot.cards.first(where: { $0.id == card.id }) {
-                                DashboardCardView(card: card, table: result.table, selecting: !model.busy) { value in
+                                DashboardCardView(card: card, table: result.table, selecting: !model.busy && !saving) { value in
                                     model.select(column: card.groupColumn, value: value)
                                 }
                                 .overlay(alignment: .topTrailing) {
@@ -43,6 +43,7 @@ struct DashboardView: View {
                                             }.disabled(model.recipe.cards.count == 1)
                                         } label: { Image(systemName: "ellipsis.circle").frame(width: 44, height: 44) }
                                         .accessibilityLabel("dash.editCard".loc + " " + card.title)
+                                        .disabled(model.busy || saving)
                                     }
                                 }
                             }
@@ -237,7 +238,7 @@ private struct DashboardCardView: View {
                     .gesture(SpatialTapGesture().onEnded { event in
                         let plot = geometry[proxy.plotAreaFrame]
                         guard selecting, plot.contains(event.location),
-                              let coordinate: Double = proxy.value(atX: event.location.x - plot.minX) else { return }
+                              let coordinate: Double = proxy.value(atX: event.location.x - plot.minX), coordinate.isFinite else { return }
                         let index = Int(coordinate.rounded())
                         guard table.rows.indices.contains(index), table.rows[index][0].stringValue.utf8.count <= 4096 else { return }
                         select(table.rows[index][0])

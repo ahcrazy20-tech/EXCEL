@@ -147,6 +147,11 @@ final class DashboardTests: XCTestCase {
         XCTAssertEqual(try fixture.db.scalar("SELECT COUNT(*) FROM \(fixture.sheet.tableName)"), .int(3))
     }
 
+    func testNonFiniteAggregatesAreErrorsNotMisleadingKPIValues() throws {
+        let fixture = try AnalysisFixture(rows: [[.text("A"), .double(Double.greatestFiniteMagnitude)], [.text("B"), .double(Double.greatestFiniteMagnitude)]])
+        XCTAssertThrowsError(try run(board(fixture), fixture))
+    }
+
     func testSaveFailureRollsBackPreviousConfiguration() throws {
         let fixture = try AnalysisFixture()
         var recipe = board(fixture)

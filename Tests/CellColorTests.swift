@@ -40,6 +40,20 @@ final class CellColorTests: XCTestCase {
         XCTAssertEqual(XLSXColor.resolve(["theme": "4"], theme: palette), 0xFF4F81BD)
     }
 
+    func testTextContrastIsIndependentOfDarkMode() {
+        XCTAssertTrue(FillCodec.prefersBlackText(0xFFFFFFFF))
+        XCTAssertTrue(FillCodec.prefersBlackText(0xFFFFFF00))
+        XCTAssertTrue(FillCodec.prefersBlackText(0xFFFF0000))
+        XCTAssertFalse(FillCodec.prefersBlackText(0xFF000000))
+        XCTAssertFalse(FillCodec.prefersBlackText(0xFF0000FF))
+    }
+
+    func testSystemThemeUsesSavedLastColor() throws {
+        let parser = ThemeParser()
+        try parse("<a:theme xmlns:a=\"urn:theme\"><a:clrScheme><a:lt1><a:sysClr val=\"window\" lastClr=\"ABCDEF\"/></a:lt1></a:clrScheme></a:theme>", delegate: parser)
+        XCTAssertEqual(parser.scheme, [0xFFABCDEF])
+    }
+
     func testTintUsesHLSLuminanceAndClamps() {
         XCTAssertEqual(XLSXColor.applyTint(0xFF4F81BD, 0.4), 0xFF95B3D7)
         XCTAssertEqual(XLSXColor.applyTint(0xFF4F81BD, -1), 0xFF000000)

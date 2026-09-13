@@ -101,6 +101,10 @@ final class ThemeParser: NSObject, XMLParserDelegate {
         case "srgbClr":
             current = XLSXColor.parseHex(attributeDict["val"] ?? "")
         case "sysClr":
+            if let cached = attributeDict["lastClr"].flatMap({ XLSXColor.parseHex($0) }) {
+                current = cached
+                return
+            }
             switch attributeDict["val"] {
             case "window": current = 0xFFFFFFFF
             case "windowText": current = 0xFF000000
@@ -199,6 +203,16 @@ final class FillSpoolReader {
 // MARK: - Encoding helpers shared with the UI
 
 enum FillCodec {
+    /// Choose black/white using relative luminance contrast, independent of iOS appearance.
+    static func prefersBlackText(_ argb: UInt32) -> Bool {
+        func linear(_ value: UInt32) -> Double {
+            let s = Double(value) / 255
+            return s <= 0.04045 ? s / 12.92 : pow((s + 0.055) / 1.055, 2.4)
+        }
+        let luminance = 0.2126 * linear((argb >> 16) & 255) + 0.7152 * linear((argb >> 8) & 255) + 0.0722 * linear(argb & 255)
+        return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05)
+    }
+
     /// Parses a stored `f` value (`"3:FFED7D00;7:FFCC0000"`) into col → ARGB.
     static func decode(_ s: String) -> [Int: UInt32] {
         guard !s.isEmpty else { return [:] }

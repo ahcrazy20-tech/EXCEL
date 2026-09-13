@@ -107,8 +107,8 @@ struct DataGridView: View {
     }
 
     private func headerText(_ column: ColumnInfo) -> Color {
-        guard let fill = headerFill(column) else { return .primary }
-        return fill.luminance < 0.55 ? .white : .black
+        guard vm.colorsEnabled, let argb = vm.headerFills[column.index] else { return .primary }
+        return FillCodec.prefersBlackText(argb) ? .black : .white
     }
 
     // MARK: Rows
@@ -156,8 +156,8 @@ struct DataGridView: View {
         let numeric = col.kind == .number
         let fillColor = fills?[col.index].map { Color(argb: $0) }
         let textColor: Color = {
-            guard let fillColor else { return .primary }
-            return fillColor.luminance < 0.55 ? .white : .black
+            guard let argb = fills?[col.index] else { return .primary }
+            return FillCodec.prefersBlackText(argb) ? .black : .white
         }()
         return Text(display(value, kind: col.kind))
             .font(.system(size: fontSize, design: numeric ? .monospaced : .default))

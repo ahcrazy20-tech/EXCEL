@@ -80,8 +80,8 @@ struct DashboardRecipe: Codable, Hashable {
 }
 
 enum DashboardError: LocalizedError {
-    case invalid
-    var errorDescription: String? { "dash.invalid".loc }
+    case invalid, nonFinite
+    var errorDescription: String? { self == .invalid ? "dash.invalid".loc : "dash.nonFinite".loc }
 }
 
 struct DashboardCardResult: Identifiable {
@@ -152,6 +152,11 @@ enum DashboardRunner {
                 }
             }
             let table = try db.readResult(sql, params, limit: limit)
+            for row in table.rows {
+                for value in row {
+                    if case .double(let number) = value, !number.isFinite { throw DashboardError.nonFinite }
+                }
+            }
             bytes += table.rows.reduce(0) { sum, row in sum + row.reduce(0) { $0 + $1.stringValue.utf8.count + 32 } }
             guard bytes <= 4 * 1024 * 1024 else { throw AnalysisError.resultTooLarge }
             output.append(DashboardCardResult(id: card.id, table: table))
