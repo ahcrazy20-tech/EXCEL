@@ -1,5 +1,7 @@
 # Powerful next features for SheetX
 
+> **1.2.0 status:** Cross-sheet joins/strict lookups and reversible cleaning recipes are implemented. [Release guide, limits, and verified tests](RELEASE_1.2.0.md). Dashboards remain a later phase.
+
 These are **proposals**, not features claimed as shipped. SheetX already has local import, filtering, pivots, basic charts, AI/offline questions, Saved Analyses and Data Overview. The best next investments should build on them, not repeat them.
 
 | Priority | Feature | What it enables | Size / main dependency |

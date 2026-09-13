@@ -57,7 +57,15 @@ Each step reports changed cells, removed rows, and invalid conversions. Invalid 
 - `bash ci/test-core.sh` builds the **unchanged Foundation/SQLite production sources** in a temporary Swift package and runs the core XCTest suites on a macOS host. Only localization is adapted for the host. It is also a pre-build test gate in `project.yml`; the existing GitHub build workflow can execute these tests without a simulator or workflow-file edits.
 - iOS-specific preferences/UI tests are not part of the host suite. A successful host test run is not a simulator or physical-device test.
 - Executing the previously unrun overview tests exposed an existing unqualified `COUNT(*)`/SQLite-authorizer mismatch. Internal reads now qualify `main` explicitly; the strict AI authorizer is unchanged. Migration also checks column existence rather than intentionally swallowing a duplicate-column error on every open.
-- Native build/test results will be recorded after the release build completes.
+- **Verified 2026-09-13:** [build 34763388043](https://github.com/ahcrazy20-tech/EXCEL/actions/runs/34763388043), source commit `631361ccf18d827b75ab0eca24c90bb2292c5e2c`, Xcode 16.2 on macOS 14.8.9.
+- **57 native host XCTest cases passed, zero failures**, including **26 preparation cases**, 10 analysis safety, 3 overview, 5 result presentation, 6 storage/deletion, and 7 saved-analysis cases.
+- **Unsigned iOS Release compilation, packaging, and artifact upload passed.** Build job duration: 2m 6s. [Download the 1.2.0 artifact](https://github.com/ahcrazy20-tech/EXCEL/actions/runs/34763388043/artifacts/10319907304) (`SheetX-unsigned-ipa`, 4,584,834 bytes).
+- Static Swift syntax checks (excluding the known baseline SettingsView parser limitation), bilingual localization-key checks, version/plist/YAML checks, and `git diff --check` also passed.
+- The project defines 76 unit-test methods in total; the 19 outside this host subset and the iOS UI tests were **not run**. No simulator or physical-device verification is claimed.
+
+### Install
+
+Download the artifact ZIP, extract `SheetX-unsigned.ipa`, and install it with TrollStore **over the existing app**. Do not delete SheetX first, because deletion removes its local workspace. Export important data as a precaution before updating.
 
 ### Device acceptance checklist
 
