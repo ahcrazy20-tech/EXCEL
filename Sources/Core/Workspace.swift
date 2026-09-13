@@ -192,19 +192,52 @@ final class Workspace: @unchecked Sendable {
                    [.int(on ? 1 : 0), .int(sheetID)])
     }
 
-    func deleteWorkbook(_ id: Int64) throws {
-        let sheets = try loadSheets(workbookID: id)
-        for s in sheets {
-            try? db.exec("DROP TABLE IF EXISTS \(s.tableName.sqlIdentifier);")
-            try? db.exec("DROP TABLE IF EXISTS \((s.tableName + "_fts").sqlIdentifier);")
-            try? db.exec("DROP TABLE IF EXISTS \(s.fillsTableName.sqlIdentifier);")
-            try db.run("DELETE FROM meta_columns WHERE sheet_id=?", [.int(s.id)])
-            try db.run("DELETE FROM meta_reports WHERE sheet_id=?", [.int(s.id)])
-            try db.run("DELETE FROM meta_saved_queries WHERE sheet_id=?", [.int(s.id)])
+    /// Remove only this sheet. DDL and metadata are committed together, or all
+    /// restored on failure. The original imported file is never modified.
+    @discardableResult
+    func deleteSheet(_ id: Int64, workbookID: Int64) throws -> [Int64] {
+        try db.transaction {
+            let rows = try db.query("SELECT workbook_id,table_name FROM meta_sheets WHERE id=?", [.int(id)])
+            guard let row = rows.first else { return [id] } // idempotent stale selection
+            guard case .int(let owner) = row[0], owner == workbookID else {
+                throw DBError.exec("files.sheetChanged".loc)
+            }
+            try deleteSheetContents(id: id, tableName: row[1].stringValue)
+            try db.run("""
+                DELETE FROM meta_workbooks WHERE id=?
+                AND NOT EXISTS (SELECT 1 FROM meta_sheets WHERE workbook_id=?)
+                """, [.int(workbookID), .int(workbookID)])
+            return [id]
         }
-        try db.run("DELETE FROM meta_sheets WHERE workbook_id=?", [.int(id)])
-        try db.run("DELETE FROM meta_workbooks WHERE id=?", [.int(id)])
-        try? db.exec("VACUUM;")
+    }
+
+    @discardableResult
+    func deleteWorkbook(_ id: Int64) throws -> [Int64] {
+        try db.transaction {
+            let rows = try db.query("SELECT id,table_name FROM meta_sheets WHERE workbook_id=?", [.int(id)])
+            var removed: [Int64] = []
+            for row in rows {
+                guard case .int(let sheetID) = row[0] else { throw DBError.exec("files.sheetChanged".loc) }
+                try deleteSheetContents(id: sheetID, tableName: row[1].stringValue)
+                removed.append(sheetID)
+            }
+            try db.run("DELETE FROM meta_workbooks WHERE id=?", [.int(id)])
+            return removed
+        }
+    }
+
+    private func deleteSheetContents(id: Int64, tableName: String) throws {
+        let canonical = "data_\(id)"
+        // Never let stale/corrupt metadata point deletion at another sheet.
+        guard tableName == canonical || tableName.isEmpty else { throw DBError.exec("files.sheetChanged".loc) }
+        try db.exec("DROP TABLE IF EXISTS \((canonical + "_fts").sqlIdentifier);")
+        try db.exec("DROP TABLE IF EXISTS \((canonical + "_f").sqlIdentifier);")
+        try db.exec("DROP TABLE IF EXISTS \(canonical.sqlIdentifier);")
+        try db.run("DELETE FROM meta_columns WHERE sheet_id=?", [.int(id)])
+        try db.run("DELETE FROM meta_reports WHERE sheet_id=?", [.int(id)])
+        try db.run("DELETE FROM meta_saved_queries WHERE sheet_id=?", [.int(id)])
+        try db.run("DELETE FROM meta_sheets WHERE id=?", [.int(id)])
+        // No synchronous VACUUM: deleted pages are reused by future imports.
     }
 
     func renameSheet(_ sheetID: Int64, to name: String) throws {
@@ -214,8 +247,11 @@ final class Workspace: @unchecked Sendable {
     // MARK: - Reports
 
     func saveReport(sheetID: Int64, title: String, body: String) throws {
-        try db.run("INSERT INTO meta_reports(sheet_id,title,body,created_at) VALUES(?,?,?,?)",
-                   [.int(sheetID), .text(title), .text(body), .double(Date().timeIntervalSince1970)])
+        let inserted = try db.run("""
+            INSERT INTO meta_reports(sheet_id,title,body,created_at)
+            SELECT id,?,?,? FROM meta_sheets WHERE id=?
+            """, [.text(title), .text(body), .double(Date().timeIntervalSince1970), .int(sheetID)])
+        guard inserted == 1 else { throw DBError.exec("files.sheetChanged".loc) }
     }
 
     struct StoredReport: Identifiable, Hashable {

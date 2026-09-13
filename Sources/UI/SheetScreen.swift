@@ -5,6 +5,9 @@ struct SheetScreen: View {
     @StateObject private var vm: SheetViewModel
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var library: Library
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmDeleteSheet = false
+    @State private var deletingSheet = false
 
     @State private var searchText = ""
     @State private var showFilters = false
@@ -39,6 +42,22 @@ struct SheetScreen: View {
                 selectedColumn = col
             }
         }
+        .disabled(deletingSheet)
+        .overlay { if deletingSheet { ProgressView("files.deleting".loc).padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
+        .alert("files.deleteSheet".loc, isPresented: $confirmDeleteSheet) {
+            Button("common.delete".loc, role: .destructive) {
+                guard !deletingSheet, !library.storageBusy else { return }
+                deletingSheet = true
+                searchTask?.cancel()
+                vm.suspend()
+                Task {
+                    let removed = await library.delete(sheet: sheet)
+                    deletingSheet = false
+                    if removed { dismiss() } else { vm.refresh() }
+                }
+            }
+            Button("common.cancel".loc, role: .cancel) {}
+        } message: { Text(String(format: "files.deleteSheetMessage".loc, sheet.name)) }
         .navigationTitle(sheet.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
@@ -48,7 +67,7 @@ struct SheetScreen: View {
         .sheet(isPresented: $showColumns) {
             ColumnManagerView(vm: vm)
         }
-        .sheet(isPresented: $showAsk) {
+        .fullScreenCover(isPresented: $showAsk) {
             AskView(vm: vm)
         }
         .sheet(isPresented: $showCharts) {
@@ -57,6 +76,14 @@ struct SheetScreen: View {
         .sheet(isPresented: $showOverview) { DataOverviewView(vm: vm) }
         .sheet(isPresented: $showSavedAnalyses) { SavedAnalysesView(vm: vm) }
         .onChange(of: vm.query.search) { value in searchText = value }
+        .onChange(of: library.workbooks.flatMap { $0.sheets.map(\.id) }) { ids in
+            if !ids.contains(sheet.id) {
+                searchTask?.cancel()
+                vm.suspend()
+                showAsk = false
+                dismiss()
+            }
+        }
         .sheet(isPresented: $showStats) {
             StatsView(vm: vm)
         }
@@ -164,6 +191,10 @@ struct SheetScreen: View {
                 Divider()
                 Button { showExport = true } label: { Label("sheet.export".loc, systemImage: "square.and.arrow.up") }
                 Button { generateReport() } label: { Label("report.generate".loc, systemImage: "doc.text.magnifyingglass") }
+                Divider()
+                Button(role: .destructive) { confirmDeleteSheet = true } label: {
+                    Label("files.deleteSheet".loc, systemImage: "trash")
+                }.disabled(library.storageBusy || deletingSheet)
             } label: {
                 Image(systemName: "ellipsis.circle")
             }

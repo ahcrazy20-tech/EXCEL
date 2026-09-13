@@ -17,22 +17,41 @@ final class Library: ObservableObject {
 
     @Published var workbooks: [WorkbookInfo] = []
     @Published var importing = false
+    @Published private(set) var deleting = false
+    var storageBusy: Bool { importing || deleting }
     @Published var progress: ImportProgress?
     @Published var errorMessage: String?
     @Published var reports: [Workspace.StoredReport] = []
 
     private let cancelBox = CancelBox()
+    private var catalogueGeneration = 0
     let workspace = Workspace.shared
 
     private init() { reload() }
 
     func reload() {
+        catalogueGeneration += 1
         do {
             workbooks = try workspace.loadWorkbooks()
             reports = try workspace.loadReports()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func reloadInBackground() async {
+        guard !storageBusy else { return }
+        let generation = catalogueGeneration
+        let workspace = self.workspace
+        do {
+            let snapshot = try await Task.detached(priority: .userInitiated) {
+                (try workspace.loadWorkbooks(), try workspace.loadReports())
+            }.value
+            // A deletion publishes its own authoritative catalogue after commit.
+            guard !storageBusy, generation == catalogueGeneration else { return }
+            workbooks = snapshot.0
+            reports = snapshot.1
+        } catch { errorMessage = error.localizedDescription }
     }
 
     func cancelImport() { cancelBox.cancel() }
@@ -59,7 +78,7 @@ final class Library: ObservableObject {
     }()
 
     func importFiles(_ urls: [URL], headerMode: HeaderMode, importColors: Bool? = nil) {
-        guard !importing else { return }
+        guard !storageBusy else { return }
         importing = true
         cancelBox.reset()
         progress = ImportProgress(stage: "starting", fraction: 0, rowsDone: 0, sheetName: "")
@@ -139,22 +158,58 @@ final class Library: ObservableObject {
         return dest
     }
 
-    func delete(workbook: WorkbookInfo) {
+    func delete(sheet: SheetInfo) async -> Bool {
+        let workspace = self.workspace
+        return await removeSheets { try workspace.deleteSheet(sheet.id, workbookID: sheet.workbookID) }
+    }
+
+    func delete(workbook: WorkbookInfo) async -> Bool {
+        let workspace = self.workspace
+        return await removeSheets(removingWorkbook: workbook.id) { try workspace.deleteWorkbook(workbook.id) }
+    }
+
+    private func removeSheets(removingWorkbook: Int64? = nil,
+                              operation: @escaping () throws -> [Int64]) async -> Bool {
+        guard !storageBusy else { errorMessage = "files.storageBusy".loc; return false }
+        deleting = true
+        catalogueGeneration += 1
+        defer { deleting = false }
         do {
-            try workspace.deleteWorkbook(workbook.id)
-            reload()
-        } catch { errorMessage = error.localizedDescription }
+            let deleted = try await Task.detached(priority: .userInitiated) { try operation() }.value
+            let ids = Set(deleted)
+            catalogueGeneration += 1
+            SheetViewModel.removeLayouts(for: ids)
+            // Update the visible catalogue only after the transaction commits.
+            workbooks = workbooks.compactMap { workbook in
+                if workbook.id == removingWorkbook { return nil }
+                var updated = workbook
+                let affected = workbook.sheets.contains { ids.contains($0.id) }
+                updated.sheets.removeAll { ids.contains($0.id) }
+                return affected && updated.sheets.isEmpty ? nil : updated
+            }
+            reports.removeAll { ids.contains($0.sheetID) }
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
     }
 
     func deleteAll() {
-        for wb in workbooks { try? workspace.deleteWorkbook(wb.id) }
-        for r in reports { try? workspace.deleteReport(r.id) }
-        reload()
+        guard !storageBusy else { return }
+        Task {
+            // Use the same guarded asynchronous path; stop at the first failure.
+            for workbook in workbooks {
+                if !(await delete(workbook: workbook)) { break }
+            }
+        }
     }
 
     func saveReport(sheetID: Int64, title: String, body: String) {
-        try? workspace.saveReport(sheetID: sheetID, title: title, body: body)
-        reload()
+        do {
+            try workspace.saveReport(sheetID: sheetID, title: title, body: body)
+            reload()
+        } catch { errorMessage = error.localizedDescription }
     }
 
     func deleteReport(_ id: Int64) {
@@ -169,7 +224,7 @@ final class Library: ObservableObject {
 
     /// Generates a demo dataset so the app is useful before any import.
     func createSampleData() {
-        guard !importing else { return }
+        guard !storageBusy else { return }
         importing = true
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }

@@ -27,6 +27,11 @@ struct AskView: View {
     @State private var analysisTitle = ""
     @State private var savingAnalysis = false
     @State private var savedNotice = false
+    @State private var showOptions = false
+    @State private var showResultExplorer = false
+    @State private var processingResult = false
+    @State private var textDetail: AskTextDetail?
+    @FocusState private var questionFocused: Bool
 
     init(vm: SheetViewModel, recipe: SavedAnalysisRecipe? = nil) {
         self.vm = vm
@@ -35,46 +40,83 @@ struct AskView: View {
         _replayPlan = State(initialValue: recipe?.plan)
     }
 
+    #if DEBUG
+    // Deterministic UI regression input; never present in the unsigned Release IPA.
+    init(layoutTestModel vm: SheetViewModel, result: ResultTable, narrative: String) {
+        self.vm = vm
+        recipe = nil
+        _command = State(initialValue: "Large result layout test")
+        _completedCommand = State(initialValue: "Large result layout test")
+        _plan = State(initialValue: CommandPlan())
+        _result = State(initialValue: result)
+        _narrative = State(initialValue: narrative)
+    }
+    #endif
+
     private var suggestions: [String] {
         NLQueryParser.suggestions(for: vm.sheet, arabic: settings.language == .ar)
     }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    inputCard
-                    if running {
-                        HStack {
-                            ProgressView()
-                            Text("ask.thinking".loc)
-                            Spacer()
-                            Button("common.cancel".loc) { cancelRun() }
-                        }.padding(.horizontal)
+            GeometryReader { geometry in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        if running {
+                            HStack { ProgressView(); Text("ask.thinking".loc).font(.caption) }.padding(.horizontal)
+                        }
+                        if savedNotice {
+                            Label("analysis.savedOK".loc, systemImage: "bookmark.fill")
+                                .font(.caption).foregroundStyle(.green).padding(.horizontal)
+                        }
+                        if let errorText {
+                            VStack(alignment: .leading) {
+                                Label(String(errorText.prefix(500)), systemImage: "exclamationmark.triangle")
+                                    .font(.caption).foregroundStyle(.red).lineLimit(5)
+                                Button("ask.readFull".loc) {
+                                    textDetail = AskTextDetail(title: "common.error".loc, text: errorText)
+                                }.font(.caption)
+                            }.padding(.horizontal)
+                        }
+                        if let plan { planCard(plan) }
+                        if let narrative { narrativeCard(narrative) }
+                        if let result { resultCard(result) }
+                        if plan == nil && !running { suggestionCard }
                     }
-                    if savedNotice {
-                        Label("analysis.savedOK".loc, systemImage: "bookmark.fill")
-                            .font(.caption).foregroundStyle(.green).padding(.horizontal)
-                    }
-                    if let errorText {
-                        Label(errorText, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .padding(.horizontal)
-                    }
-                    if let plan { planCard(plan) }
-                    if let narrative { narrativeCard(narrative) }
-                    if let result { resultCard(result) }
-                    if plan == nil && !running { suggestionCard }
+                    .padding(.vertical, 12)
+                    .frame(width: geometry.size.width, alignment: .leading)
                 }
-                .padding(.vertical, 12)
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .contentShape(Rectangle())
+                .clipped()
+                .scrollDismissesKeyboard(.interactively)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                inputCard.padding(12).background(.regularMaterial)
             }
             .navigationTitle("ask.title".loc)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("common.close".loc) { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("common.close".loc) { questionFocused = false; cancelRun(showMessage: false); dismiss() }
+                        .accessibilityIdentifier("ask.close")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button { questionFocused = false; showOptions = true } label: {
+                        Image(systemName: "slider.horizontal.3")
+                    }.accessibilityLabel("ask.options".loc).accessibilityIdentifier("ask.options")
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("common.done".loc) { questionFocused = false }
+                }
             }
             .sheet(item: $shareItem) { item in ShareSheet(items: [item.url]) }
+            .sheet(item: $textDetail) { detail in LongTextView(title: detail.title, text: detail.text) }
+            .sheet(isPresented: $showOptions) { optionsView }
+            .sheet(isPresented: $showResultExplorer) {
+                if let result { ResultExplorerView(table: result).presentationDetents([.large]) }
+            }
             .alert("analysis.save".loc, isPresented: $showSaveAnalysis) {
                 TextField("analysis.name".loc, text: $analysisTitle)
                 Button("settings.save".loc) { saveAnalysis() }
@@ -90,44 +132,65 @@ struct AskView: View {
         }
     }
 
-    // MARK: Cards
-
+    // The composer is not part of the result scroll view. Run, Cancel, keyboard
+    // dismissal and options stay reachable regardless of result dimensions.
     private var inputCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             TextField("ask.placeholder".loc, text: $command, axis: .vertical)
-                .lineLimit(1...4)
+                .lineLimit(1...(running ? 1 : 3))
                 .textFieldStyle(.roundedBorder)
                 .submitLabel(.go)
+                .focused($questionFocused)
                 .onSubmit(run)
-                .disabled(running || savingAnalysis)
-
-            HStack {
-                Picker("", selection: $useAI) {
-                    Text("ask.offline".loc).tag(false)
-                    Text("ask.ai".loc).tag(true)
+                .disabled(running || savingAnalysis || processingResult)
+                .accessibilityIdentifier("ask.question")
+            HStack(spacing: 10) {
+                Button { questionFocused = false; showOptions = true } label: {
+                    Label(useAI && replayPlan == nil ? "ask.ai".loc : "ask.offline".loc,
+                          systemImage: useAI && replayPlan == nil ? "sparkles" : "iphone")
+                        .lineLimit(1)
+                }.font(.caption)
+                Spacer(minLength: 0)
+                if processingResult || savingAnalysis { ProgressView() }
+                if running {
+                    Button("common.cancel".loc) { cancelRun() }
+                        .buttonStyle(.bordered).accessibilityIdentifier("ask.cancel")
+                } else {
+                    Button(action: run) { Label("ask.run".loc, systemImage: "play.fill") }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || savingAnalysis || processingResult)
+                        .accessibilityIdentifier("ask.run")
                 }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 220)
-                .disabled(!settings.hasAI || running || replayPlan != nil)
-
-                Spacer()
-
-                Button(action: run) {
-                    Label("ask.run".loc, systemImage: "play.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(command.trimmingCharacters(in: .whitespaces).isEmpty || running || savingAnalysis)
-            }
-            if replayPlan != nil {
-                Label("analysis.replay".loc, systemImage: "arrow.clockwise")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if useAI {
-                Toggle("analysis.narrate".loc, isOn: $includeNarrative).font(.caption).disabled(running)
-                Text("settings.aiNote".loc).font(.caption2).foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal)
+    }
+
+    private var optionsView: some View {
+        NavigationStack {
+            Form {
+                Section("ask.options".loc) {
+                    Picker("settings.provider".loc, selection: $useAI) {
+                        Text("ask.offline".loc).tag(false)
+                        Text("ask.ai".loc).tag(true)
+                    }
+                    .disabled(!settings.hasAI || running || replayPlan != nil)
+                    if useAI {
+                        Toggle("analysis.narrate".loc, isOn: $includeNarrative).disabled(running)
+                    }
+                    if replayPlan != nil { Text("analysis.replay".loc).font(.caption) }
+                    Text("settings.aiNote".loc).font(.caption).foregroundStyle(.secondary)
+                    if !settings.hasAI { Text("ai.none".loc).foregroundStyle(.orange) }
+                }
+            }
+            .navigationTitle("ask.options".loc)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("common.done".loc) { showOptions = false }.accessibilityIdentifier("ask.options.done")
+                }
+            }
+        }
+        .presentationDetents([.large])
     }
 
     private var suggestionCard: some View {
@@ -164,10 +227,12 @@ struct AskView: View {
                 }
                 Text("analysis.localResult".loc).font(.caption2).foregroundStyle(.secondary)
             }
-            Text(plan.explanation.isEmpty ? plan.kind.rawValue : plan.explanation)
-                .font(.subheadline)
+            Text(String((plan.explanation.isEmpty ? plan.kind.rawValue : plan.explanation).prefix(700)))
+                .font(.subheadline).lineLimit(4)
             if !plan.sql.isEmpty {
-                Text(plan.sql).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(4)
+                Text(String(plan.sql.prefix(1000))).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(4)
+                Button("ask.readFull".loc) { textDetail = AskTextDetail(title: "ask.plan".loc, text: plan.sql) }
+                    .font(.caption)
             }
             if let output {
                 Text("\(vm.sheet.name) · " + String(format: "analysis.elapsed".loc, output.elapsed))
@@ -182,7 +247,7 @@ struct AskView: View {
                     } label: { Label("ask.applyToSheet".loc, systemImage: "arrow.down.doc") }
                         .font(.caption).buttonStyle(.bordered)
                 }
-                HStack {
+                VStack(alignment: .leading, spacing: 8) {
                     Button { saveAsReport() } label: {
                         Label("ask.saveResult".loc, systemImage: "square.and.arrow.down")
                     }
@@ -192,7 +257,7 @@ struct AskView: View {
                     } label: { Label("analysis.save".loc, systemImage: "bookmark") }
                 }
                 .font(.caption).buttonStyle(.bordered)
-                .disabled(running || savingAnalysis)
+                .disabled(running || savingAnalysis || processingResult)
                 if savingAnalysis { ProgressView("ai.saving".loc) }
             }
         }
@@ -204,7 +269,9 @@ struct AskView: View {
     private func narrativeCard(_ text: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("report.aiNarrative".loc, systemImage: "sparkles").font(.caption.bold())
-            Text(text).font(.subheadline).textSelection(.enabled)
+            Text(String(text.prefix(2000))).font(.subheadline).lineLimit(10).textSelection(.enabled)
+            Button("ask.readFull".loc) { textDetail = AskTextDetail(title: "report.aiNarrative".loc, text: text) }
+                .font(.caption).accessibilityIdentifier("ask.readResponse")
         }
         .padding()
         .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
@@ -213,23 +280,25 @@ struct AskView: View {
 
     private func resultCard(_ table: ResultTable) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            Text("ask.result".loc).font(.caption.bold())
             HStack {
-                Text("ask.result".loc).font(.caption.bold())
+                Button { questionFocused = false; showResultExplorer = true } label: {
+                    Label("result.expand".loc, systemImage: "arrow.up.left.and.arrow.down.right")
+                }.accessibilityIdentifier("ask.expandResult")
                 Spacer()
-                Text(String(format: "analysis.previewRows".loc, min(100, table.rows.count), table.rows.count))
-                    .font(.caption2).foregroundStyle(.secondary)
                 Menu {
                     Button("CSV") { export(table, .csv) }
                     Button("XLSX") { export(table, .xlsx) }
                     Button("JSON") { export(table, .json) }
-                } label: { Image(systemName: "square.and.arrow.up").font(.caption) }
-            }
+                } label: { Image(systemName: "square.and.arrow.up").padding(8) }
+                    .accessibilityLabel("sheet.export".loc).disabled(processingResult)
+            }.font(.caption)
             if table.isEmpty { Text("sheet.noResults".loc).foregroundStyle(.secondary) }
             if table.truncated {
                 Label("analysis.truncated".loc, systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.orange)
             }
-            ResultTableView(table: table)
+            ResultTableView(table: table).id(output?.completedAt)
         }
         .padding()
         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
@@ -248,7 +317,8 @@ struct AskView: View {
 
     private func run() {
         let text = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !running, !savingAnalysis else { return }
+        guard !text.isEmpty, !running, !savingAnalysis, !processingResult else { return }
+        questionFocused = false
         cancelRun(showMessage: false)
         let id = runID
         running = true
@@ -278,7 +348,9 @@ struct AskView: View {
                 } else if let ai {
                     computedPlan = try await ai.plan(command: text, sheet: sheet)
                 } else {
-                    computedPlan = NLQueryParser(sheet: sheet).parse(text)
+                    computedPlan = await Task.detached(priority: .userInitiated) {
+                        NLQueryParser(sheet: sheet).parse(text)
+                    }.value
                 }
                 try Task.checkCancellation()
                 let executed = try await AnalysisRunner.execute(plan: computedPlan, path: path, sheet: sheet, arabic: arabic)
@@ -293,8 +365,12 @@ struct AskView: View {
 
                 if narrate, let ai, let table = executed.table, !table.isEmpty {
                     let builder = ReportBuilder(engine: vm.engine, arabic: arabic)
-                    let context = "QUESTION: \(text)\nRESULT PREVIEW (may be truncated):\n"
-                        + builder.markdownTable(table, maxRows: 25)
+                    let context = await Task.detached(priority: .userInitiated) {
+                        let preview = builder.markdownTable(table, maxRows: 25)
+                        return "QUESTION: \(text)\nRESULT PREVIEW (rows, columns or text may be truncated):\n"
+                            + String(preview.prefix(60_000))
+                    }.value
+                    try Task.checkCancellation()
                     let answer = try await ai.ask(question: text, context: context, language: arabic ? "ar" : "en")
                     try Task.checkCancellation()
                     guard runID == id else { return }
@@ -327,76 +403,55 @@ struct AskView: View {
     }
 
     private func saveAsReport() {
+        guard !processingResult else { return }
+        processingResult = true
         let arabic = settings.language == .ar
         let builder = ReportBuilder(engine: vm.engine, arabic: arabic)
-        var md = "# \(completedCommand)\n\n"
-        md += "\(vm.sheet.name) · \(Date().formatted())\n\n"
-        if let plan { md += "_\(plan.explanation)_\n\n" }
-        if let narrative { md += narrative + "\n\n" }
-        if let result {
-            if result.truncated || result.rows.count > 200 { md += "\("analysis.truncated".loc)\n\n" }
-            md += builder.markdownTable(result, maxRows: 200)
+        let title = completedCommand
+        let sheet = vm.sheet
+        let savedPlan = plan, savedNarrative = narrative, savedResult = result
+        let workspace = library.workspace
+        Task { @MainActor in
+            defer { processingResult = false }
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    var markdown = "# \(title)\n\n\(sheet.name) · \(Date().formatted())\n\n"
+                    if let savedPlan { markdown += "_\(savedPlan.explanation)_\n\n" }
+                    if let savedNarrative { markdown += savedNarrative + "\n\n" }
+                    if let savedResult {
+                        if savedResult.truncated || savedResult.rows.count > 200 { markdown += "\("analysis.truncated".loc)\n\n" }
+                        markdown += builder.markdownTable(savedResult, maxRows: 200)
+                    }
+                    try workspace.saveReport(sheetID: sheet.id, title: title, body: markdown)
+                }.value
+                await library.reloadInBackground()
+                settings.haptic(.medium)
+                dismiss()
+            } catch { errorText = error.localizedDescription }
         }
-        library.saveReport(sheetID: vm.sheet.id, title: completedCommand, body: md)
-        settings.haptic(.medium)
-        dismiss()
     }
 
     private func export(_ table: ResultTable, _ format: ExportFormat) {
-        do {
-            let url: URL
-            switch format {
-            case .xlsx: url = try Exporter.xlsx(table: table, name: "SheetX Result")
-            case .json: url = try Exporter.json(table: table, name: "SheetX Result")
-            default: url = try Exporter.csv(table: table, name: "SheetX Result")
-            }
-            shareItem = ShareItem(url: url)
-        } catch {
-            errorText = error.localizedDescription
+        guard !processingResult else { return }
+        processingResult = true
+        Task { @MainActor in
+            defer { processingResult = false }
+            do {
+                let url = try await Task.detached(priority: .userInitiated) {
+                    switch format {
+                    case .xlsx: return try Exporter.xlsx(table: table, name: "SheetX Result")
+                    case .json: return try Exporter.json(table: table, name: "SheetX Result")
+                    default: return try Exporter.csv(table: table, name: "SheetX Result")
+                    }
+                }.value
+                shareItem = ShareItem(url: url)
+            } catch { errorText = error.localizedDescription }
         }
     }
 }
 
-// MARK: - Simple scrollable result table
-
-struct ResultTableView: View {
-    let table: ResultTable
-    var maxRows = 100
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: true) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 0) {
-                    ForEach(Array(table.columns.enumerated()), id: \.offset) { _, c in
-                        Text(c)
-                            .font(.caption.bold())
-                            .frame(width: 130, alignment: .leading)
-                            .padding(6)
-                            .background(Color.accentColor.opacity(0.12))
-                    }
-                }
-                ForEach(Array(table.rows.prefix(maxRows).enumerated()), id: \.offset) { i, row in
-                    HStack(spacing: 0) {
-                        ForEach(Array(row.enumerated()), id: \.offset) { _, v in
-                            Text(format(v))
-                                .font(.caption.monospacedDigit())
-                                .lineLimit(1)
-                                .frame(width: 130, alignment: .leading)
-                                .padding(6)
-                        }
-                    }
-                    .background(i % 2 == 0 ? Color.clear : Color.secondary.opacity(0.07))
-                }
-            }
-        }
-        .frame(maxHeight: 340)
-    }
-
-    private func format(_ v: DBValue) -> String {
-        switch v {
-        case .double(let d): return ReportBuilder.formatNumber(d)
-        case .int(let i): return ReportBuilder.formatInt(Int(i))
-        default: return v.stringValue
-        }
-    }
+private struct AskTextDetail: Identifiable {
+    let id = UUID()
+    let title: String
+    let text: String
 }

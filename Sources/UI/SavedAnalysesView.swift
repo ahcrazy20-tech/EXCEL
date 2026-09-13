@@ -82,10 +82,10 @@ struct SavedAnalysesView: View {
                     Button("settings.save".loc) { if let entry = renaming { rename(entry) } }
                     Button("common.cancel".loc, role: .cancel) { renaming = nil }
                 }
-            .sheet(item: $selected, onDismiss: refresh) { entry in
+            .fullScreenCover(item: $selected, onDismiss: refresh) { entry in
                 if let recipe = entry.recipe { AskView(vm: vm, recipe: recipe) }
             }
-            .sheet(isPresented: $openNew, onDismiss: refresh) { AskView(vm: vm) }
+            .fullScreenCover(isPresented: $openNew, onDismiss: refresh) { AskView(vm: vm) }
             .task { await reload() }
         }
     }

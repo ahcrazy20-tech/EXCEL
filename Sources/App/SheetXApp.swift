@@ -7,7 +7,17 @@ struct SheetXApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            Group {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-ui-test-large-ask") {
+                    AskLayoutFixtureHost()
+                } else {
+                    RootView()
+                }
+                #else
+                RootView()
+                #endif
+            }
                 .environmentObject(settings)
                 .environmentObject(library)
                 .environment(\.layoutDirection, settings.language.layoutDirection)

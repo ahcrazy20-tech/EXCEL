@@ -57,6 +57,7 @@ enum DBValue: Hashable {
 final class Database: @unchecked Sendable {
     private var handle: OpaquePointer?
     private let queue = DispatchQueue(label: "sheetx.db")
+    private let queueKey = DispatchSpecificKey<Bool>()
     let path: String
     let analysisPolicy: AnalysisQueryPolicy?
 
@@ -69,6 +70,7 @@ final class Database: @unchecked Sendable {
     init(path: String, analysisPolicy: AnalysisQueryPolicy? = nil) throws {
         self.path = path
         self.analysisPolicy = analysisPolicy
+        queue.setSpecific(key: queueKey, value: true)
         var h: OpaquePointer?
         let flags = analysisPolicy == nil
             ? SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
@@ -122,8 +124,41 @@ final class Database: @unchecked Sendable {
         return String(cString: sqlite3_errmsg(handle))
     }
 
+    /// Re-entrant only on this database's queue, so a transaction can use the
+    /// ordinary helpers without deadlocking or allowing other work to interleave.
+    private func synchronized<T>(_ work: () throws -> T) rethrows -> T {
+        if DispatchQueue.getSpecific(key: queueKey) == true { return try work() }
+        return try queue.sync(execute: work)
+    }
+
+    func transaction<T>(_ work: () throws -> T) throws -> T {
+        try synchronized {
+            guard analysisPolicy == nil else { throw AnalysisError.readOnly }
+            guard sqlite3_get_autocommit(handle) != 0 else {
+                throw DBError.exec("files.storageBusy".loc)
+            }
+            clearStatementCache()
+            try exec("BEGIN IMMEDIATE;")
+            defer { clearStatementCache() }
+            do {
+                let value = try work()
+                try exec("COMMIT;")
+                return value
+            } catch {
+                try? exec("ROLLBACK;")
+                throw error
+            }
+        }
+    }
+
+    private func clearStatementCache() {
+        for statement in stmtCache.values { sqlite3_finalize(statement) }
+        stmtCache.removeAll()
+        stmtKeys.removeAll()
+    }
+
     func exec(_ sql: String) throws {
-        try queue.sync {
+        try synchronized {
             if sqlite3_exec(handle, sql, nil, nil, nil) != SQLITE_OK {
                 throw DBError.exec("\(errorMessage) — SQL: \(sql.prefix(300))")
             }
@@ -132,7 +167,7 @@ final class Database: @unchecked Sendable {
 
     @discardableResult
     func run(_ sql: String, _ params: [DBValue] = []) throws -> Int {
-        try queue.sync {
+        try synchronized {
             let stmt = try cachedStmt(sql, params)
             defer { sqlite3_reset(stmt) }
             let rc = sqlite3_step(stmt)
@@ -144,7 +179,7 @@ final class Database: @unchecked Sendable {
     }
 
     func lastInsertRowID() -> Int64 {
-        queue.sync { sqlite3_last_insert_rowid(handle) }
+        synchronized { sqlite3_last_insert_rowid(handle) }
     }
 
     func query(_ sql: String, _ params: [DBValue] = []) throws -> [[DBValue]] {
@@ -155,7 +190,7 @@ final class Database: @unchecked Sendable {
     /// queries throw on overflow instead of silently returning misleading statistics.
     func readResult(_ sql: String, _ params: [DBValue] = [],
                     limit: Int? = nil, truncate: Bool = true) throws -> ResultTable {
-        try queue.sync {
+        try synchronized {
             try analysisPolicy?.check()
             let stmt = try cachedStmt(sql, params)
             defer { sqlite3_reset(stmt) }
@@ -197,7 +232,7 @@ final class Database: @unchecked Sendable {
     }
 
     func columnNames(_ sql: String, _ params: [DBValue] = []) throws -> [String] {
-        try queue.sync {
+        try synchronized {
             let stmt = try cachedStmt(sql, params)
             defer { sqlite3_reset(stmt) }
             let cols = Int(sqlite3_column_count(stmt))
@@ -207,7 +242,7 @@ final class Database: @unchecked Sendable {
 
     /// Bulk insert helper: prepares once, steps many times inside one transaction.
     func bulkInsert(sql: String, rows: () throws -> [DBValue]?) throws {
-        try queue.sync {
+        try synchronized {
             if sqlite3_exec(handle, "BEGIN IMMEDIATE;", nil, nil, nil) != SQLITE_OK {
                 throw DBError.exec(errorMessage)
             }
@@ -244,7 +279,7 @@ final class Database: @unchecked Sendable {
 
         init(db: Database, sql: String) throws {
             self.db = db
-            try db.queue.sync {
+            try db.synchronized {
                 var s: OpaquePointer?
                 guard sqlite3_prepare_v2(db.handle, sql, -1, &s, nil) == SQLITE_OK else {
                     throw DBError.prepare(db.errorMessage)
@@ -254,7 +289,7 @@ final class Database: @unchecked Sendable {
         }
 
         func begin() throws {
-            try db.queue.sync {
+            try db.synchronized {
                 guard !open else { return }
                 if sqlite3_exec(db.handle, "BEGIN IMMEDIATE;", nil, nil, nil) != SQLITE_OK {
                     throw DBError.exec(db.errorMessage)
@@ -264,7 +299,7 @@ final class Database: @unchecked Sendable {
         }
 
         func insert(_ values: [DBValue]) throws {
-            try db.queue.sync {
+            try db.synchronized {
                 sqlite3_reset(stmt)
                 sqlite3_clear_bindings(stmt)
                 Database.bind(stmt, values)
@@ -275,7 +310,7 @@ final class Database: @unchecked Sendable {
         }
 
         func commit() throws {
-            try db.queue.sync {
+            try db.synchronized {
                 guard open else { return }
                 if sqlite3_exec(db.handle, "COMMIT;", nil, nil, nil) != SQLITE_OK {
                     throw DBError.exec(db.errorMessage)
@@ -286,7 +321,7 @@ final class Database: @unchecked Sendable {
 
         func finish() {
             try? commit()
-            db.queue.sync {
+            db.synchronized {
                 if let stmt { sqlite3_finalize(stmt) }
                 stmt = nil
             }

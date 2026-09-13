@@ -26,10 +26,11 @@ final class SheetViewModel: ObservableObject {
     let pageSize = 200
     private var loadingPages = Set<Int>()
     private var generation = 0
+    private var active = true
 
-    init(sheet: SheetInfo) {
+    init(sheet: SheetInfo, database: Database = Workspace.shared.db) {
         self.sheet = sheet
-        self.engine = QueryEngine(db: Workspace.shared.db, sheet: sheet)
+        self.engine = QueryEngine(db: database, sheet: sheet)
         self.totalRows = sheet.rowCount
         loadLayout()
         refresh()
@@ -38,6 +39,12 @@ final class SheetViewModel: ObservableObject {
     // MARK: Per-sheet layout persistence (column widths + hidden columns)
 
     private static let layoutKey = "sheetLayouts"
+
+    static func removeLayouts(for sheetIDs: Set<Int64>, defaults: UserDefaults = .standard) {
+        var layouts = defaults.dictionary(forKey: layoutKey) ?? [:]
+        for id in sheetIDs { layouts.removeValue(forKey: String(id)) }
+        defaults.set(layouts, forKey: layoutKey)
+    }
 
     private func loadLayout() {
         guard let all = UserDefaults.standard.dictionary(forKey: Self.layoutKey),
@@ -97,6 +104,7 @@ final class SheetViewModel: ObservableObject {
     }
 
     func refresh() {
+        active = true
         generation += 1
         let gen = generation
         loadedPages.removeAll()
@@ -120,6 +128,15 @@ final class SheetViewModel: ObservableObject {
         }
     }
 
+    func suspend() {
+        active = false
+        generation += 1
+        loadingPages.removeAll()
+        loadedPages.removeAll()
+        pageFills.removeAll()
+        isLoading = false
+    }
+
     func row(at index: Int) -> [DBValue]? {
         let page = index / pageSize
         guard let rows = loadedPages[page] else {
@@ -131,7 +148,7 @@ final class SheetViewModel: ObservableObject {
     }
 
     func requestPage(_ page: Int) {
-        guard !loadingPages.contains(page), loadedPages[page] == nil, page >= 0 else { return }
+        guard active, !loadingPages.contains(page), loadedPages[page] == nil, page >= 0 else { return }
         loadingPages.insert(page)
         let gen = generation
         let spec = query

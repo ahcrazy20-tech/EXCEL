@@ -6,6 +6,7 @@ struct FilesView: View {
     @EnvironmentObject var settings: AppSettings
     @State private var showImporter = false
     @State private var searchText = ""
+    @State private var pendingDeletion: LibraryDeletion?
 
     var filtered: [WorkbookInfo] {
         guard !searchText.isEmpty else { return library.workbooks }
@@ -30,7 +31,7 @@ struct FilesView: View {
                     } label: {
                         Image(systemName: "plus.circle.fill").font(.title3)
                     }
-                    .disabled(library.importing)
+                    .disabled(library.storageBusy)
                 }
             }
             .searchable(text: $searchText)
@@ -41,9 +42,25 @@ struct FilesView: View {
                 }
                 .ignoresSafeArea()
             }
-            .overlay(alignment: .bottom) {
+            .safeAreaInset(edge: .bottom) {
                 if library.importing { importBanner }
+                else if library.deleting {
+                    ProgressView("files.deleting".loc).padding().frame(maxWidth: .infinity).background(.regularMaterial)
+                }
             }
+            .alert("files.confirmDelete".loc, isPresented: Binding(
+                get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }),
+                   presenting: pendingDeletion) { target in
+                Button("common.delete".loc, role: .destructive) {
+                    Task {
+                        switch target {
+                        case .sheet(let sheet): _ = await library.delete(sheet: sheet)
+                        case .workbook(let workbook): _ = await library.delete(workbook: workbook)
+                        }
+                    }
+                }
+                Button("common.cancel".loc, role: .cancel) {}
+            } message: { target in Text(target.message) }
         }
     }
 
@@ -111,12 +128,16 @@ struct FilesView: View {
                         } label: {
                             SheetRow(sheet: sheet)
                         }
-                        .swipeActions {
-                            Button(role: .destructive) {
-                                library.delete(workbook: wb)
-                            } label: {
-                                Label("files.delete".loc, systemImage: "trash")
-                            }
+                        .accessibilityIdentifier("files.sheet.\(sheet.id)")
+                        .swipeActions(allowsFullSwipe: false) {
+                            Button(role: .destructive) { pendingDeletion = .sheet(sheet) } label: {
+                                Label("files.deleteSheet".loc, systemImage: "trash")
+                            }.disabled(library.storageBusy)
+                        }
+                        .contextMenu {
+                            Button(role: .destructive) { pendingDeletion = .sheet(sheet) } label: {
+                                Label("files.deleteSheet".loc, systemImage: "trash")
+                            }.disabled(library.storageBusy)
                         }
                     }
                 } header: {
@@ -126,6 +147,12 @@ struct FilesView: View {
                         Spacer()
                         Text(ByteCountFormatter.string(fromByteCount: wb.sizeBytes, countStyle: .file))
                             .font(.caption2).foregroundStyle(.secondary)
+                        Menu {
+                            Button(role: .destructive) { pendingDeletion = .workbook(wb) } label: {
+                                Label("files.deleteWorkbook".loc, systemImage: "trash")
+                            }.disabled(library.storageBusy)
+                        } label: { Image(systemName: "ellipsis.circle").padding(6) }
+                            .accessibilityLabel("files.workbookActions".loc)
                     }
                     .textCase(nil)
                 } footer: {
@@ -135,7 +162,7 @@ struct FilesView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .refreshable { library.reload() }
+        .refreshable { if !library.storageBusy { library.reload() } }
     }
 
     private var importBanner: some View {
@@ -186,5 +213,20 @@ struct SheetRow: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// The confirmation states both the target and the extent of deletion.
+private enum LibraryDeletion {
+    case sheet(SheetInfo)
+    case workbook(WorkbookInfo)
+
+    var message: String {
+        switch self {
+        case .sheet(let sheet):
+            return String(format: "files.deleteSheetMessage".loc, sheet.name)
+        case .workbook(let workbook):
+            return String(format: "files.deleteWorkbookMessage".loc, workbook.name, workbook.sheets.count)
+        }
     }
 }
