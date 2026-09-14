@@ -185,18 +185,21 @@ final class TrashTests: XCTestCase {
     func testTrashAllIsAtomicAndRetainsExistingTrash() throws {
         let fixture = try AnalysisFixture()
         let second = try sibling(fixture)
+        let otherWorkbook = try fixture.workspace.createWorkbook(name: "Other", fileName: "other.csv", size: 0)
+        let third = try fixture.workspace.createSheet(workbookID: otherWorkbook, name: "Third", index: 0)
+        try fixture.db.exec("CREATE TABLE data_\(third)(c0)")
         try fixture.workspace.trashSheet(fixture.sheet.id, workbookID: fixture.sheet.workbookID)
         let token = try entry(fixture).id
-        XCTAssertEqual(try fixture.workspace.trashAllSheets(), [second.id])
+        XCTAssertEqual(Set(try fixture.workspace.trashAllSheets()), Set([second.id, third]))
         XCTAssertEqual(try entry(fixture).id, token)
-        XCTAssertEqual(try fixture.workspace.trashCount(), 2)
+        XCTAssertEqual(try fixture.workspace.trashCount(), 3)
         XCTAssertTrue(try fixture.workspace.loadWorkbooks().isEmpty)
     }
 
     func testWorkbookTrashRollbackRestoresAllVisibility() throws {
         let fixture = try AnalysisFixture()
-        let second = try sibling(fixture)
-        try fixture.db.exec("CREATE TRIGGER reject_trash BEFORE INSERT ON meta_sheet_trash WHEN new.sheet_id=\(second.id) BEGIN SELECT RAISE(ABORT,'test'); END")
+        _ = try sibling(fixture)
+        try fixture.db.exec("CREATE TRIGGER reject_trash BEFORE INSERT ON meta_sheet_trash WHEN (SELECT COUNT(*) FROM meta_sheet_trash)=1 BEGIN SELECT RAISE(ABORT,'test'); END")
         XCTAssertThrowsError(try fixture.workspace.trashWorkbook(fixture.sheet.workbookID))
         XCTAssertEqual(try fixture.workspace.trashCount(), 0)
         XCTAssertEqual(try fixture.workspace.loadSheets(workbookID: fixture.sheet.workbookID).count, 2)
@@ -246,6 +249,21 @@ final class TrashTests: XCTestCase {
         XCTAssertThrowsError(try fixture.workspace.trashSheet(fixture.sheet.id, workbookID: fixture.sheet.workbookID))
         XCTAssertThrowsError(try fixture.workspace.trashAllSheets())
         XCTAssertEqual(try fixture.workspace.trashCount(), 0)
+    }
+
+    func testUpgradeFromPreTrashSchemaPreservesExistingWork() throws {
+        let fixture = try AnalysisFixture()
+        try fixture.workspace.saveReport(sheetID: fixture.sheet.id, title: "Keep", body: "Body")
+        try fixture.db.exec("DROP TABLE meta_sheet_trash")
+        // Standalone pre-upgrade read-only analysis also tolerates the absent catalog.
+        XCTAssertEqual(try fixture.reader().scalar("SELECT COUNT(*) FROM main.\(fixture.sheet.tableName.sqlIdentifier)"), .int(3))
+        let upgraded = try Workspace(db: fixture.db)
+        XCTAssertEqual(try upgraded.loadWorkbooks().first?.sheets.first?.id, fixture.sheet.id)
+        XCTAssertEqual(try upgraded.loadReports().first?.title, "Keep")
+        XCTAssertEqual(try upgraded.trashCount(), 0)
+        try upgraded.trashSheet(fixture.sheet.id, workbookID: fixture.sheet.workbookID)
+        try upgraded.restoreSheet(entry(fixture))
+        XCTAssertEqual(try fixture.db.scalar("SELECT COUNT(*) FROM \(fixture.sheet.tableName)"), .int(3))
     }
 
     func testTrashPersistsAcrossConnectionsAndPaginationIsBounded() throws {

@@ -30,8 +30,9 @@ struct TrashView: View {
                             .font(.caption).foregroundStyle(.secondary)
                         HStack {
                             Button { act(entry, permanently: false) } label: {
-                                Label("trash.restore".loc, systemImage: "arrow.uturn.backward")
+                                Label("trash.restore".loc, systemImage: "arrow.uturn.backward").frame(minHeight: 44)
                             }
+                            .accessibilityLabel("trash.restore".loc + " " + entry.name)
                             .accessibilityIdentifier("trash.restore.\(entry.sheetID)")
                             Spacer()
                             Button(role: .destructive) { selected = entry } label: {
@@ -75,6 +76,7 @@ struct TrashView: View {
         generation += 1
         let version = generation, workspace = library.workspace, requested = page
         loading = true
+        defer { if version == generation { loading = false } }
         do {
             let result = try await Task.detached(priority: .userInitiated) {
                 let count = try workspace.trashCount()
@@ -86,7 +88,6 @@ struct TrashView: View {
         } catch {
             if version == generation { message = error.localizedDescription }
         }
-        if version == generation { loading = false }
     }
 
     private func act(_ entry: TrashedSheet, permanently: Bool) {
