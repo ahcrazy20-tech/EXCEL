@@ -105,6 +105,10 @@ final class Workspace: @unchecked Sendable {
             body TEXT NOT NULL,
             created_at REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS meta_sheet_trash(
+            sheet_id INTEGER PRIMARY KEY, token TEXT NOT NULL UNIQUE, deleted_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_trash_date ON meta_sheet_trash(deleted_at DESC,sheet_id DESC);
         CREATE TABLE IF NOT EXISTS meta_dashboards(
             sheet_id INTEGER PRIMARY KEY, title TEXT NOT NULL, payload TEXT NOT NULL
         );
@@ -125,7 +129,7 @@ final class Workspace: @unchecked Sendable {
     // MARK: - Reading catalog
 
     func loadWorkbooks() throws -> [WorkbookInfo] {
-        let wbRows = try db.query("SELECT id,name,file_name,size_bytes,imported_at FROM meta_workbooks ORDER BY imported_at DESC")
+        let wbRows = try db.query("SELECT id,name,file_name,size_bytes,imported_at FROM meta_workbooks WHERE NOT EXISTS (SELECT 1 FROM meta_sheets WHERE workbook_id=meta_workbooks.id) OR EXISTS (SELECT 1 FROM meta_sheets WHERE workbook_id=meta_workbooks.id AND id NOT IN (SELECT sheet_id FROM meta_sheet_trash)) ORDER BY imported_at DESC")
         var result: [WorkbookInfo] = []
         for r in wbRows {
             guard case .int(let id) = r[0] else { continue }
@@ -143,7 +147,7 @@ final class Workspace: @unchecked Sendable {
 
     func loadSheets(workbookID: Int64) throws -> [SheetInfo] {
         let rows = try db.query(
-            "SELECT id,name,table_name,row_count,sheet_index,has_colors,EXISTS(SELECT 1 FROM meta_preparations p WHERE p.sheet_id=meta_sheets.id) FROM meta_sheets WHERE workbook_id=? ORDER BY sheet_index",
+            "SELECT id,name,table_name,row_count,sheet_index,has_colors,EXISTS(SELECT 1 FROM meta_preparations p WHERE p.sheet_id=meta_sheets.id) FROM meta_sheets WHERE workbook_id=? AND id NOT IN (SELECT sheet_id FROM meta_sheet_trash) ORDER BY sheet_index",
             [.int(workbookID)])
         return try rows.compactMap { r in
             guard case .int(let sid) = r[0] else { return nil }
@@ -236,7 +240,7 @@ final class Workspace: @unchecked Sendable {
         }
     }
 
-    private func deleteSheetContents(id: Int64, tableName: String) throws {
+    func deleteSheetContents(id: Int64, tableName: String) throws {
         let canonical = "data_\(id)"
         // Never let stale/corrupt metadata point deletion at another sheet.
         guard tableName == canonical || tableName.isEmpty else { throw DBError.exec("files.sheetChanged".loc) }
@@ -248,12 +252,13 @@ final class Workspace: @unchecked Sendable {
         try db.run("DELETE FROM meta_saved_queries WHERE sheet_id=?", [.int(id)])
         try db.run("DELETE FROM meta_preparations WHERE sheet_id=?", [.int(id)])
         try db.run("DELETE FROM meta_dashboards WHERE sheet_id=?", [.int(id)])
+        try db.run("DELETE FROM meta_sheet_trash WHERE sheet_id=?", [.int(id)])
         try db.run("DELETE FROM meta_sheets WHERE id=?", [.int(id)])
         // No synchronous VACUUM: deleted pages are reused by future imports.
     }
 
     func renameSheet(_ sheetID: Int64, to name: String) throws {
-        try db.run("UPDATE meta_sheets SET name=? WHERE id=?", [.text(name), .int(sheetID)])
+        try db.run("UPDATE meta_sheets SET name=? WHERE id=? AND id NOT IN (SELECT sheet_id FROM meta_sheet_trash)", [.text(name), .int(sheetID)])
     }
 
     // MARK: - Reports
@@ -261,7 +266,7 @@ final class Workspace: @unchecked Sendable {
     func saveReport(sheetID: Int64, title: String, body: String) throws {
         let inserted = try db.run("""
             INSERT INTO meta_reports(sheet_id,title,body,created_at)
-            SELECT id,?,?,? FROM meta_sheets WHERE id=?
+            SELECT id,?,?,? FROM meta_sheets WHERE id=? AND id NOT IN (SELECT sheet_id FROM meta_sheet_trash)
             """, [.text(title), .text(body), .double(Date().timeIntervalSince1970), .int(sheetID)])
         guard inserted == 1 else { throw DBError.exec("files.sheetChanged".loc) }
     }
@@ -275,7 +280,7 @@ final class Workspace: @unchecked Sendable {
     }
 
     func loadReports() throws -> [StoredReport] {
-        let rows = try db.query("SELECT id,sheet_id,title,body,created_at FROM meta_reports ORDER BY created_at DESC LIMIT 200")
+        let rows = try db.query("SELECT id,sheet_id,title,body,created_at FROM meta_reports WHERE sheet_id NOT IN (SELECT sheet_id FROM meta_sheet_trash) ORDER BY created_at DESC LIMIT 200")
         return rows.compactMap { r in
             guard case .int(let id) = r[0], case .int(let sid) = r[1] else { return nil }
             return StoredReport(id: id, sheetID: sid, title: r[2].stringValue, body: r[3].stringValue,
@@ -284,6 +289,6 @@ final class Workspace: @unchecked Sendable {
     }
 
     func deleteReport(_ id: Int64) throws {
-        try db.run("DELETE FROM meta_reports WHERE id=?", [.int(id)])
+        try db.run("DELETE FROM meta_reports WHERE id=? AND sheet_id NOT IN (SELECT sheet_id FROM meta_sheet_trash)", [.int(id)])
     }
 }

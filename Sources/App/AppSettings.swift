@@ -15,7 +15,7 @@ enum L10n {
     static var language: AppLanguage = .ar
 
     static func t(_ key: String) -> String {
-        guard let pair = table[key] ?? PreparationLocalization.table[key] ?? DashboardLocalization.table[key] else { return key }
+        guard let pair = table[key] ?? PreparationLocalization.table[key] ?? DashboardLocalization.table[key] ?? TrashLocalization.table[key] else { return key }
         return language == .ar ? pair.1 : pair.0
     }
 
@@ -130,7 +130,7 @@ enum L10n {
         "settings.showColors": ("Show colors inside the grid", "إظهار الألوان داخل الجدول"),
         "settings.storage": ("Storage", "التخزين"),
         "settings.dbSize": ("Database size", "حجم قاعدة البيانات"),
-        "settings.clearAll": ("Delete all data", "حذف كل البيانات"),
+        "settings.clearAll": ("Move all sheets to Trash", "نقل كل الأوراق إلى السلة"),
         "settings.about": ("About", "حول"),
         "settings.haptics": ("Haptics", "الاهتزاز"),
 
@@ -226,12 +226,12 @@ enum L10n {
         "overview.invalidNumbers": ("%d non-empty values are not stored as numbers; excluded from numeric metrics.", "%d قيمة غير فارغة ليست مخزّنة كأرقام؛ استُبعدت من المقاييس الرقمية."),
         "overview.showMissing": ("Show missing across entire sheet", "عرض القيم المفقودة في الورقة كاملة"),
         "overview.missingScope": ("Replaces current filters and search. The grid may include more missing rows than this profile sample.", "يستبدل الفلاتر والبحث الحاليين. قد يعرض الجدول صفوفًا مفقودة أكثر من هذه العينة."),
-        "files.deleteSheet": ("Delete sheet", "حذف الورقة"),
-        "files.deleteWorkbook": ("Delete entire workbook", "حذف الملف بكل أوراقه"),
+        "files.deleteSheet": ("Move sheet to Trash", "نقل الورقة إلى السلة"),
+        "files.deleteWorkbook": ("Move workbook to Trash", "نقل المصنف إلى السلة"),
         "files.workbookActions": ("Workbook actions", "إجراءات الملف"),
-        "files.confirmDelete": ("Confirm deletion", "تأكيد الحذف"),
-        "files.deleteSheetMessage": ("Delete “%@” and its local data, reports and saved analyses? Other sheets and the original file will not be changed. If this is the last sheet, its empty workbook is removed too. This cannot be undone.", "هل تريد حذف «%@» وبياناتها المحلية وتقاريرها وتحليلاتها المحفوظة؟ لن تتغير الأوراق الأخرى أو الملف الأصلي. إذا كانت آخر ورقة، يُحذف الملف الفارغ من المكتبة أيضًا. لا يمكن التراجع عن الحذف."),
-        "files.deleteWorkbookMessage": ("Delete “%@” and all %d sheets, including their local data, reports and saved analyses? The original file is unchanged. This cannot be undone.", "هل تريد حذف «%@» وكل أوراقه (%d) مع بياناتها المحلية وتقاريرها وتحليلاتها المحفوظة؟ لن يتغير الملف الأصلي. لا يمكن التراجع عن الحذف."),
+        "files.confirmDelete": ("Move to Trash?", "نقل إلى السلة؟"),
+        "files.deleteSheetMessage": ("Move “%@” to Trash? Its data, colors and saved work are retained. Restore it from My Sheets → Trash. Other sheets and the original file are unchanged.", "نقل «%@» إلى السلة؟ تبقى بياناتها وألوانها وأعمالها المحفوظة. استعدها من ملفاتي ← السلة. لا تتغير الأوراق الأخرى أو الملف الأصلي."),
+        "files.deleteWorkbookMessage": ("Move “%@” and all %d active sheets to Trash? Data and saved work are retained. Restore sheets from My Sheets → Trash. The original file and existing Trash entries are unchanged.", "نقل «%@» وكل أوراقه النشطة (%d) إلى السلة؟ تبقى البيانات والأعمال المحفوظة. استعد الأوراق من ملفاتي ← السلة. لا يتغير الملف الأصلي أو العناصر الموجودة في السلة."),
         "files.storageBusy": ("Please wait for the current import or deletion to finish.", "يرجى الانتظار حتى تنتهي عملية الاستيراد أو الحذف الحالية."),
         "files.sheetChanged": ("This sheet is no longer available or its stored identity has changed. Refresh the library and try again.", "هذه الورقة لم تعد متاحة أو تغيرت هويتها المخزنة. حدّث المكتبة وأعد المحاولة."),
         "files.deleting": ("Deleting local data…", "جارٍ حذف البيانات المحلية…"),

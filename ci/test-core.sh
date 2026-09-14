@@ -9,19 +9,19 @@ trap 'rm -rf "$PACKAGE_DIR"' EXIT
 mkdir -p "$PACKAGE_DIR/Sources" "$PACKAGE_DIR/Tests"
 for file in Database Workspace AnalysisQueryPolicy QueryEngine NLQueryParser SavedAnalysis AIClient AIEndpoint \
     ReportBuilder AnalysisRunner DataOverview ResultPresentation \
-    PreparationModels PreparationEngine CleanValueRules Dashboard CellFills XLSXParsers HeaderDetector; do
+    PreparationModels PreparationEngine CleanValueRules Dashboard CellFills XLSXParsers HeaderDetector SheetTrash; do
     cp "$ROOT/Sources/Core/$file.swift" "$PACKAGE_DIR/Sources/"
 done
-cp "$ROOT/Sources/App/PreparationLocalization.swift" "$ROOT/Sources/App/DashboardLocalization.swift" "$PACKAGE_DIR/Sources/"
+cp "$ROOT/Sources/App/PreparationLocalization.swift" "$ROOT/Sources/App/DashboardLocalization.swift" "$ROOT/Sources/App/TrashLocalization.swift" "$PACKAGE_DIR/Sources/"
 # Only presentation localization is adapted; database and preparation code are unchanged.
 cat > "$PACKAGE_DIR/Sources/HostLocalization.swift" <<'SWIFT'
 import Foundation
 extension String {
-    var loc: String { PreparationLocalization.table[self]?.0 ?? DashboardLocalization.table[self]?.0 ?? self }
+    var loc: String { PreparationLocalization.table[self]?.0 ?? DashboardLocalization.table[self]?.0 ?? TrashLocalization.table[self]?.0 ?? self }
 }
 SWIFT
 for file in AnalysisFixture AnalysisSafetyTests WorkspaceAnalysisTests DataOverviewTests \
-    ResultPresentationTests SheetDeletionTests PreparationTests DashboardTests CellColorTests; do
+    ResultPresentationTests SheetDeletionTests PreparationTests DashboardTests CellColorTests TrashTests; do
     cp "$ROOT/Tests/$file.swift" "$PACKAGE_DIR/Tests/"
 done
 cat > "$PACKAGE_DIR/Package.swift" <<'SWIFT'

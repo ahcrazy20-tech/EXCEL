@@ -95,6 +95,16 @@ final class Database: @unchecked Sendable {
                 try exec("CREATE TEMP VIEW data AS SELECT rowid AS rowid,* FROM main.\(policy.tableName.sqlIdentifier);")
                 try exec("PRAGMA query_only=ON;")
                 try exec("BEGIN;") // one consistent read snapshot for multi-statement profiling
+                // Trusted setup only, before installing the AI authorizer. Old/in-memory
+                // fixtures without a Trash catalog remain readable. Existing jobs retain
+                // their snapshot; new jobs must restore a trashed source first.
+                if try scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='meta_sheet_trash'") == .int(1),
+                   policy.tableName.hasPrefix("data_"), let id = Int64(policy.tableName.dropFirst(5)),
+                   try scalar("SELECT COUNT(*) FROM meta_sheet_trash WHERE sheet_id=?", [.int(id)]) != .int(0) {
+                    throw TrashError.unavailable
+                }
+                // Never let a cached pre-authorization metadata statement be reused by AI SQL.
+                clearStatementCache()
                 policy.install(on: handle)
             } else {
                 try exec("PRAGMA journal_mode=WAL;")
@@ -106,6 +116,7 @@ final class Database: @unchecked Sendable {
                 try exec("PRAGMA busy_timeout=5000;")
             }
         } catch {
+            clearStatementCache()
             sqlite3_close_v2(handle)
             handle = nil
             throw error

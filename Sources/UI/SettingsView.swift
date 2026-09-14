@@ -122,9 +122,9 @@ struct SettingsView: View {
             }
             .navigationTitle("settings.title".loc)
             .alert("settings.clearAll".loc, isPresented: $confirmClear) {
-                Button("common.delete".loc, role: .destructive) { library.deleteAll() }
+                Button("trash.move".loc, role: .destructive) { library.deleteAll() }
                 Button("common.cancel".loc, role: .cancel) {}
-            }
+            } message: { Text("trash.allMessage".loc) }
         }
     }
 

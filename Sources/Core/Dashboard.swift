@@ -201,7 +201,7 @@ extension Workspace {
     }
 
     func loadDashboards() throws -> [StoredDashboard] {
-        try db.query("SELECT sheet_id,title,payload FROM meta_dashboards ORDER BY sheet_id DESC LIMIT 200").map { row in
+        try db.query("SELECT sheet_id,title,payload FROM meta_dashboards WHERE sheet_id NOT IN (SELECT sheet_id FROM meta_sheet_trash) ORDER BY sheet_id DESC LIMIT 200").map { row in
             let payload = row[2].stringValue
             return StoredDashboard(id: Int64(row[0].doubleValue ?? 0), title: row[1].stringValue,
                 recipe: payload.utf8.count <= 128 * 1024 ? try? JSONDecoder().decode(DashboardRecipe.self, from: Data(payload.utf8)) : nil)
@@ -209,13 +209,13 @@ extension Workspace {
     }
 
     func dashboard(sheetID: Int64) throws -> DashboardRecipe? {
-        guard let row = try db.query("SELECT payload FROM meta_dashboards WHERE sheet_id=?", [.int(sheetID)]).first else { return nil }
+        guard let row = try db.query("SELECT payload FROM meta_dashboards WHERE sheet_id=? AND sheet_id NOT IN (SELECT sheet_id FROM meta_sheet_trash)", [.int(sheetID)]).first else { return nil }
         let payload = row[0].stringValue
         guard payload.utf8.count <= 128 * 1024, let recipe = try? JSONDecoder().decode(DashboardRecipe.self, from: Data(payload.utf8)) else { throw DashboardError.invalid }
         return recipe
     }
 
     func deleteDashboard(sheetID: Int64) throws {
-        try db.run("DELETE FROM meta_dashboards WHERE sheet_id=?", [.int(sheetID)])
+        try db.run("DELETE FROM meta_dashboards WHERE sheet_id=? AND sheet_id NOT IN (SELECT sheet_id FROM meta_sheet_trash)", [.int(sheetID)])
     }
 }

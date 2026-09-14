@@ -48,7 +48,7 @@ struct SheetScreen: View {
         .disabled(deletingSheet)
         .overlay { if deletingSheet { ProgressView("files.deleting".loc).padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
         .alert("files.deleteSheet".loc, isPresented: $confirmDeleteSheet) {
-            Button("common.delete".loc, role: .destructive) {
+            Button("trash.move".loc, role: .destructive) {
                 guard !deletingSheet, !library.storageBusy else { return }
                 deletingSheet = true
                 searchTask?.cancel()

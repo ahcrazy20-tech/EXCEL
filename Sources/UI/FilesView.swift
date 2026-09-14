@@ -5,6 +5,7 @@ struct FilesView: View {
     @EnvironmentObject var library: Library
     @EnvironmentObject var settings: AppSettings
     @State private var showImporter = false
+    @State private var showTrash = false
     @State private var searchText = ""
     @State private var pendingDeletion: LibraryDeletion?
 
@@ -24,6 +25,11 @@ struct FilesView: View {
             }
             .navigationTitle("files.title".loc)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button { showTrash = true } label: {
+                        Label("trash.title".loc + " (\(library.trashedCount))", systemImage: "trash")
+                    }.accessibilityIdentifier("files.trash")
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         settings.haptic()
@@ -35,6 +41,7 @@ struct FilesView: View {
                 }
             }
             .searchable(text: $searchText)
+            .fullScreenCover(isPresented: $showTrash) { TrashView() }
             .sheet(isPresented: $showImporter) {
                 DocumentPicker { urls in
                     showImporter = false
@@ -51,7 +58,7 @@ struct FilesView: View {
             .alert("files.confirmDelete".loc, isPresented: Binding(
                 get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }),
                    presenting: pendingDeletion) { target in
-                Button("common.delete".loc, role: .destructive) {
+                Button("trash.move".loc, role: .destructive) {
                     Task {
                         switch target {
                         case .sheet(let sheet): _ = await library.delete(sheet: sheet)

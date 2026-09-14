@@ -11,7 +11,7 @@ enum PreparationEngine {
 
     static func validate(_ source: PreparationSource, db: Database, schema: String) throws {
         try source.validateStructure()
-        let rows = try db.query("SELECT workbook_id,table_name,row_count FROM \(schema).meta_sheets WHERE id=?", [.int(source.id)])
+        let rows = try db.query("SELECT workbook_id,table_name,row_count FROM \(schema).meta_sheets WHERE id=? AND id NOT IN (SELECT sheet_id FROM \(schema).meta_sheet_trash)", [.int(source.id)])
         guard let row = rows.first, row[0] == .int(source.workbookID), row[1] == .text(source.tableName),
               row[2] == .int(Int64(source.rowCount)) else { throw PreparationError.sourceChanged }
         let columns = try db.query("SELECT col_index,name,kind FROM \(schema).meta_columns WHERE sheet_id=? ORDER BY col_index", [.int(source.id)])

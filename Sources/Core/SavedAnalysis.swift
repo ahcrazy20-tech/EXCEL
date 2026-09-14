@@ -86,7 +86,7 @@ extension Workspace {
         // INSERT...SELECT refuses to create orphan records if a source was deleted.
         let changed = try db.run("""
             INSERT INTO meta_saved_queries(sheet_id,title,payload,created_at)
-            SELECT id,?,?,? FROM meta_sheets WHERE id=?
+            SELECT id,?,?,? FROM meta_sheets WHERE id=? AND id NOT IN (SELECT sheet_id FROM meta_sheet_trash)
             """, [.text(name), .text(String(decoding: payload, as: UTF8.self)),
                   .double(Date().timeIntervalSince1970), .int(sheet.id)])
         guard changed == 1 else { throw AnalysisError.incompatibleRecipe }
@@ -95,7 +95,7 @@ extension Workspace {
     func loadAnalyses(sheetID: Int64) throws -> [SavedAnalysis] {
         try db.query("""
             SELECT id,title,payload,created_at FROM meta_saved_queries
-            WHERE sheet_id=? ORDER BY created_at DESC,id DESC LIMIT 200
+            WHERE sheet_id=? AND sheet_id NOT IN (SELECT sheet_id FROM meta_sheet_trash) ORDER BY created_at DESC,id DESC LIMIT 200
             """, [.int(sheetID)]).map { row in
                 SavedAnalysis(id: Int64(row[0].doubleValue ?? 0), title: row[1].stringValue,
                               createdAt: Date(timeIntervalSince1970: row[3].doubleValue ?? 0),
@@ -107,11 +107,11 @@ extension Workspace {
     func renameAnalysis(id: Int64, sheetID: Int64, title: String) throws {
         let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.count <= 120 else { throw AnalysisError.invalidPlan }
-        try db.run("UPDATE meta_saved_queries SET title=? WHERE id=? AND sheet_id=?",
+        try db.run("UPDATE meta_saved_queries SET title=? WHERE id=? AND sheet_id=? AND sheet_id NOT IN (SELECT sheet_id FROM meta_sheet_trash)",
                    [.text(name), .int(id), .int(sheetID)])
     }
 
     func deleteAnalysis(id: Int64, sheetID: Int64) throws {
-        try db.run("DELETE FROM meta_saved_queries WHERE id=? AND sheet_id=?", [.int(id), .int(sheetID)])
+        try db.run("DELETE FROM meta_saved_queries WHERE id=? AND sheet_id=? AND sheet_id NOT IN (SELECT sheet_id FROM meta_sheet_trash)", [.int(id), .int(sheetID)])
     }
 }

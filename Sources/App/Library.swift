@@ -22,6 +22,7 @@ final class Library: ObservableObject {
     var storageBusy: Bool { importing || deleting || publishing }
     @Published var progress: ImportProgress?
     @Published var errorMessage: String?
+    @Published private(set) var trashedCount = 0
     @Published var reports: [Workspace.StoredReport] = []
 
     private let cancelBox = CancelBox()
@@ -35,6 +36,7 @@ final class Library: ObservableObject {
         do {
             workbooks = try workspace.loadWorkbooks()
             reports = try workspace.loadReports()
+            trashedCount = try workspace.trashCount()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -46,12 +48,13 @@ final class Library: ObservableObject {
         let workspace = self.workspace
         do {
             let snapshot = try await Task.detached(priority: .userInitiated) {
-                (try workspace.loadWorkbooks(), try workspace.loadReports())
+                (try workspace.loadWorkbooks(), try workspace.loadReports(), try workspace.trashCount())
             }.value
             // A deletion publishes its own authoritative catalogue after commit.
             guard !storageBusy, generation == catalogueGeneration else { return }
             workbooks = snapshot.0
             reports = snapshot.1
+            trashedCount = snapshot.2
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -185,17 +188,18 @@ final class Library: ObservableObject {
 
     func delete(sheet: SheetInfo) async -> Bool {
         let workspace = self.workspace
-        return await removeSheets { try workspace.deleteSheet(sheet.id, workbookID: sheet.workbookID) }
+        return await removeSheets { try workspace.trashSheet(sheet.id, workbookID: sheet.workbookID) }
     }
 
     func delete(workbook: WorkbookInfo) async -> Bool {
         let workspace = self.workspace
-        return await removeSheets(removingWorkbook: workbook.id) { try workspace.deleteWorkbook(workbook.id) }
+        return await removeSheets(removingWorkbook: workbook.id) { try workspace.trashWorkbook(workbook.id) }
     }
 
     private func removeSheets(removingWorkbook: Int64? = nil,
                               operation: @escaping () throws -> [Int64]) async -> Bool {
         guard !storageBusy else { errorMessage = "files.storageBusy".loc; return false }
+        let workspace = self.workspace
         deleting = true
         catalogueGeneration += 1
         defer { deleting = false }
@@ -203,7 +207,7 @@ final class Library: ObservableObject {
             let deleted = try await Task.detached(priority: .userInitiated) { try operation() }.value
             let ids = Set(deleted)
             catalogueGeneration += 1
-            SheetViewModel.removeLayouts(for: ids)
+            trashedCount += ids.count // authoritative count is refreshed below; layouts are retained
             // Update the visible catalogue only after the transaction commits.
             workbooks = workbooks.compactMap { workbook in
                 if workbook.id == removingWorkbook { return nil }
@@ -213,6 +217,7 @@ final class Library: ObservableObject {
                 return affected && updated.sheets.isEmpty ? nil : updated
             }
             reports.removeAll { ids.contains($0.sheetID) }
+            trashedCount = (try? await Task.detached { try workspace.trashCount() }.value) ?? trashedCount
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -222,16 +227,37 @@ final class Library: ObservableObject {
 
     func deleteAll() {
         guard !storageBusy else { return }
-        Task {
-            // Use the same guarded asynchronous path; stop at the first failure.
-            for workbook in workbooks {
-                if !(await delete(workbook: workbook)) { break }
-            }
-        }
+        let workspace = self.workspace
+        Task { _ = await removeSheets { try workspace.trashAllSheets() } }
+    }
+
+    /// No UI/catalogue changes before the transaction succeeds. A catalogue read
+    /// failure after commit is reported separately and never mistaken for rollback.
+    func recoverOrPurge(_ entry: TrashedSheet, permanently: Bool) async -> Bool {
+        guard !storageBusy else { errorMessage = "files.storageBusy".loc; return false }
+        errorMessage = nil
+        deleting = true; catalogueGeneration += 1
+        defer { deleting = false }
+        let workspace = self.workspace
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                if permanently { try workspace.permanentlyDelete(entry) }
+                else { try workspace.restoreSheet(entry) }
+            }.value
+        } catch { errorMessage = error.localizedDescription; return false }
+        if permanently { SheetViewModel.removeLayouts(for: [entry.sheetID]) }
+        catalogueGeneration += 1
+        do {
+            let snapshot = try await Task.detached(priority: .userInitiated) {
+                (try workspace.loadWorkbooks(), try workspace.loadReports(), try workspace.trashCount())
+            }.value
+            workbooks = snapshot.0; reports = snapshot.1; trashedCount = snapshot.2
+        } catch { errorMessage = "trash.refreshNeeded".loc }
+        return true
     }
 
     func saveReport(sheetID: Int64, title: String, body: String) {
-        guard !publishing else { errorMessage = "files.storageBusy".loc; return }
+        guard !storageBusy else { errorMessage = "files.storageBusy".loc; return }
         do {
             try workspace.saveReport(sheetID: sheetID, title: title, body: body)
             reload()
@@ -239,7 +265,7 @@ final class Library: ObservableObject {
     }
 
     func deleteReport(_ id: Int64) {
-        guard !publishing else { errorMessage = "files.storageBusy".loc; return }
+        guard !storageBusy else { errorMessage = "files.storageBusy".loc; return }
         try? workspace.deleteReport(id)
         reload()
     }
