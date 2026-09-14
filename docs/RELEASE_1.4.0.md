@@ -39,7 +39,7 @@ The native macOS Foundation/SQLite test gate includes **19 new Trash tests**, al
 - **101 native macOS-host XCTest cases passed, zero failures**, including all **19 Trash tests** and the previous 82 core cases. The final run explicitly passed pre-Trash schema migration, multi-workbook move-all, rollback and stale-confirmation regressions.
 - **Unsigned iOS Release build, packaging and upload passed**; job duration **2m 6s**.
 - [Download SheetX 1.4.0](https://github.com/ahcrazy20-tech/EXCEL/actions/runs/34810212808/artifacts/10335020635): `SheetX-unsigned-ipa`, **4,832,595 bytes**. Extract the ZIP and install `SheetX-unsigned.ipa` with TrollStore **over the existing app**. Do not delete SheetX first.
-- Static Swift parsing, localization-key checks, version/plist/YAML alignment and shell/diff checks passed.
+- Static Swift parsing (known baseline SettingsView parser limitation excluded), localization-key checks, version/plist/YAML alignment and shell/diff checks passed. The native Xcode build compiled SettingsView successfully.
 - The 19 unit-test methods outside the native host subset and the iOS UI tests were not run. No simulator, touchscreen or physical-device verification is claimed. In particular, layout/VoiceOver/RTL behavior and installation over a real user's existing workspace still require device acceptance.
 
 ## Device acceptance checklist (not yet executed)
